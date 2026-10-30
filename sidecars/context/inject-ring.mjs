@@ -136,7 +136,8 @@ async function listTargetPages(port) {
 
 async function standaloneContextReport(conversationId) {
   if (!fs.existsSync(REPORT_SCRIPT)) return null;
-  const cacheKey = conversationId || '__latest__';
+  if (!conversationId || !/^[0-9a-f-]{36}$/i.test(conversationId)) return null;
+  const cacheKey = conversationId;
   const cached = reportCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < 2000) {
     return cached.report;
@@ -144,10 +145,7 @@ async function standaloneContextReport(conversationId) {
   const py = await findPython();
   if (!py) return null;
 
-  const args = [...py.pre, REPORT_SCRIPT, '--json'];
-  if (conversationId && /^[0-9a-f-]{36}$/i.test(conversationId)) {
-    args.push('--conversation-id', conversationId);
-  }
+  const args = [...py.pre, REPORT_SCRIPT, '--json', '--conversation-id', conversationId];
   try {
     const stdout = await execPromise(py.cmd, args, 8000);
     const data = JSON.parse(stdout);
@@ -163,6 +161,7 @@ const CLIENT_UI_SCRIPT = String.raw`
   const RING_ID = 'agy-input-context-ring-wrap';
   const POPOVER_ID = 'agy-input-context-popover';
   const NEW_TAB_CARD_ID = 'new-tab-card-context-usage';
+  const HIDE_STYLE_ID = 'agy-context-hide-styles';
 
   const ICONS = {
     speed: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
@@ -175,6 +174,18 @@ const CLIENT_UI_SCRIPT = String.raw`
     arrow: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
     grid: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>'
   };
+
+  function setHideStyles(hide) {
+    let style = document.getElementById(HIDE_STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = HIDE_STYLE_ID;
+      document.head.appendChild(style);
+    }
+    style.textContent = hide
+      ? '[data-tab-id="sidecar__desktop-context/context__/"], #' + NEW_TAB_CARD_ID + ', #' + RING_ID + ' { display: none !important; }'
+      : '';
+  }
 
   function getActiveConvId() {
     try {
@@ -316,14 +327,18 @@ const CLIENT_UI_SCRIPT = String.raw`
   function ensureAuxNewTabEntry() {
     const newTabView = document.querySelector('[data-testid="aux-pane-new-tab-view"]');
     if (!newTabView) return;
-    if (document.getElementById(NEW_TAB_CARD_ID)) return;
+    let btn = document.getElementById(NEW_TAB_CARD_ID);
+    if (btn) {
+      btn.style.display = '';
+      return;
+    }
 
     const previewCard =
       newTabView.querySelector('[data-testid="new-tab-card-new-preview"]') ||
       newTabView.querySelector('[data-testid^="new-tab-card-"]');
     if (!previewCard || !previewCard.parentElement) return;
 
-    const btn = document.createElement('button');
+    btn = document.createElement('button');
     btn.id = NEW_TAB_CARD_ID;
     btn.type = 'button';
     btn.setAttribute('data-testid', NEW_TAB_CARD_ID);
@@ -357,6 +372,32 @@ const CLIENT_UI_SCRIPT = String.raw`
   }
 
   function findInputToolbar() {
+    // 1. Locate the composer card
+    const composer =
+      document.querySelector('.surface-composer-card, [class*="surface-composer"]') ||
+      document.querySelector('[data-testid="composer"]') ||
+      document.querySelector('form:has(textarea), form:has([contenteditable])');
+
+    // 2. Look specifically for the bottom action bar / footer inside composer
+    const footer =
+      composer?.querySelector('[class*="input-footer"]') ||
+      document.querySelector('[class*="input-footer"]');
+
+    if (footer) {
+      // Find the primary send or cancel button (always the last button in the action footer group)
+      const sendOrCancelBtn =
+        footer.querySelector('button[aria-label*="Cancel"], button[aria-label*="Send"], button[aria-label*="send"], button[data-testid*="send"]') ||
+        (() => {
+          const btns = Array.from(footer.querySelectorAll('button:not(#agy-ring-btn):not(#agy-open-sidecar-btn)'));
+          return btns.length ? btns[btns.length - 1] : null;
+        })();
+
+      if (sendOrCancelBtn && sendOrCancelBtn.parentElement) {
+        return { mode: 'toolbar', container: sendOrCancelBtn.parentElement, anchorBtn: sendOrCancelBtn };
+      }
+    }
+
+    // 3. Fallback: traverse upwards from textarea, strictly excluding attachment and preview buttons
     const candidates = [
       ...document.querySelectorAll('textarea'),
       ...document.querySelectorAll('[contenteditable="true"]'),
@@ -368,18 +409,25 @@ const CLIENT_UI_SCRIPT = String.raw`
 
     if (!candidates.length) return null;
     const inputEl = candidates[candidates.length - 1];
+    const composerCard =
+      inputEl.closest('.surface-composer-card, [class*="surface-composer"], [class*="composer"], form') ||
+      inputEl.parentElement?.parentElement;
 
-    let cur = inputEl.parentElement;
-    for (let depth = 0; depth < 6 && cur; depth++) {
-      const btns = Array.from(cur.querySelectorAll('button'));
-      if (btns.length >= 1) {
-        const lastBtn = btns[btns.length - 1];
-        const bar = lastBtn.parentElement;
-        if (bar && bar !== document.body) {
-          return { mode: 'toolbar', container: bar, anchorBtn: lastBtn };
-        }
+    if (composerCard) {
+      const validBtns = Array.from(composerCard.querySelectorAll('button:not(#agy-ring-btn):not(#agy-open-sidecar-btn)'))
+        .filter((btn) => {
+          const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+          const title = (btn.getAttribute('title') || '').toLowerCase();
+          if (aria.includes('remove') || aria.includes('delete') || aria.includes('close') || aria.includes('clear')) return false;
+          if (title.includes('remove') || title.includes('delete') || title.includes('close') || title.includes('clear')) return false;
+          if (btn.closest('[class*="attachment"], [class*="preview"], [class*="thumbnail"], [class*="pill"], [class*="chip"]')) return false;
+          return true;
+        });
+
+      if (validBtns.length > 0) {
+        const lastBtn = validBtns[validBtns.length - 1];
+        return { mode: 'toolbar', container: lastBtn.parentElement, anchorBtn: lastBtn };
       }
-      cur = cur.parentElement;
     }
 
     return { mode: 'box', container: inputEl.parentElement };
@@ -428,7 +476,62 @@ const CLIENT_UI_SCRIPT = String.raw`
 
   window.__AGY_RING_RENDER__ = function() {
     ensureStyles();
+
+    const convId = getActiveConvId();
+    const r = window.__AGY_RING_DATA__;
+    const hasContext = Boolean(
+      convId &&
+      r &&
+      !r.error &&
+      (r.conversation_id === convId || !r.conversation_id) &&
+      Number(r.used_tokens) > 0
+    );
+
+    setHideStyles(!hasContext);
+
+    // If there is no active context (e.g. brand new conversation):
+    if (!hasContext) {
+      const wrap = document.getElementById(RING_ID);
+      if (wrap) {
+        wrap.style.display = 'none';
+        const pop = wrap.querySelector('#' + POPOVER_ID);
+        const btn = wrap.querySelector('#agy-ring-btn');
+        if (pop) pop.classList.remove('open');
+        if (btn) btn.classList.remove('active');
+      }
+      const newTabCard = document.getElementById(NEW_TAB_CARD_ID);
+      if (newTabCard) newTabCard.style.display = 'none';
+
+      document.querySelectorAll('[data-tab-id="sidecar__desktop-context/context__/"]').forEach((t) => {
+        t.style.display = 'none';
+      });
+
+      // If Context Usage tab in the aux pane was open and visible, switch or close:
+      const activePluginTab = document.querySelector('[data-tab-id="sidecar__desktop-context/context__/"][aria-selected="true"], [data-tab-id="sidecar__desktop-context/context__/"][data-selected="true"], [data-tab-id="sidecar__desktop-context/context__/"].bg-secondary');
+      if (activePluginTab) {
+        const otherTabs = Array.from(document.querySelectorAll('[data-tab-id]:not([data-tab-id="sidecar__desktop-context/context__/"])'))
+          .filter((t) => t.style.display !== 'none' && t.offsetParent !== null);
+        if (otherTabs.length > 0) {
+          otherTabs[0].click();
+        } else {
+          const toggleAuxBtn = document.querySelector('[data-testid="toggle-aux-sidebar"]');
+          const auxSidebar = document.querySelector('[data-testid="aux-sidebar"], [class*="aux-sidebar"]');
+          if (auxSidebar && toggleAuxBtn && auxSidebar.getBoundingClientRect().width > 20) {
+            toggleAuxBtn.click();
+          }
+        }
+      }
+      return;
+    }
+
+    // Context is active: show the sidebar entry and input mini-ring
     ensureAuxNewTabEntry();
+    const newTabCard = document.getElementById(NEW_TAB_CARD_ID);
+    if (newTabCard) newTabCard.style.display = '';
+
+    document.querySelectorAll('[data-tab-id="sidecar__desktop-context/context__/"]').forEach((t) => {
+      t.style.display = '';
+    });
 
     const target = findInputToolbar();
     if (!target || !target.container) return;
@@ -479,7 +582,9 @@ const CLIENT_UI_SCRIPT = String.raw`
       });
     }
 
-    if (!target.container.contains(wrap)) {
+    wrap.style.display = 'inline-flex';
+
+    if (!target.container.contains(wrap) || (target.anchorBtn && wrap.nextElementSibling !== target.anchorBtn)) {
       if (target.mode === 'toolbar' && target.anchorBtn) {
         target.container.insertBefore(wrap, target.anchorBtn);
       } else {
@@ -487,18 +592,10 @@ const CLIENT_UI_SCRIPT = String.raw`
       }
     }
 
-    const r = window.__AGY_RING_DATA__;
     const btn = wrap.querySelector('#agy-ring-btn');
     const arc = wrap.querySelector('#agy-ring-arc');
     const label = wrap.querySelector('#agy-ring-label');
     const pop = wrap.querySelector('#' + POPOVER_ID);
-
-    if (!r || r.error) {
-      label.textContent = '0.0%';
-      arc.setAttribute('stroke-dasharray', '0 100');
-      pop.innerHTML = '<div style="color:var(--muted-foreground,#9aa0a6);padding:4px 0;text-align:center;">Awaiting context telemetry</div>';
-      return;
-    }
 
     const pct = Number(r.used_pct) || 0;
     const color = ringColor(pct);
@@ -747,12 +844,28 @@ export function startRingInjector(options = {}) {
           try {
             fs.writeFileSync(ACTIVE_CONV_FILE, convId);
           } catch {}
-        }
 
-        const report = await getReport(convId);
-        if (report && !report.error) {
+          const report = await getReport(convId);
+          if (report && !report.error && Number(report.used_tokens) > 0) {
+            await cdpCall(entry.ws, 'Runtime.evaluate', {
+              expression: `window.__AGY_RING_DATA__ = ${JSON.stringify(report)}; if (window.__AGY_RING_RENDER__) window.__AGY_RING_RENDER__();`,
+              returnByValue: false,
+            });
+          } else {
+            await cdpCall(entry.ws, 'Runtime.evaluate', {
+              expression: `window.__AGY_RING_DATA__ = ${JSON.stringify(report || { error: 'no-context' })}; if (window.__AGY_RING_RENDER__) window.__AGY_RING_RENDER__();`,
+              returnByValue: false,
+            });
+          }
+        } else {
+          // No active conversation (e.g. brand new conversation screen)
+          if (onActiveConversation) onActiveConversation('');
+          try {
+            if (fs.existsSync(ACTIVE_CONV_FILE)) fs.unlinkSync(ACTIVE_CONV_FILE);
+          } catch {}
+
           await cdpCall(entry.ws, 'Runtime.evaluate', {
-            expression: `window.__AGY_RING_DATA__ = ${JSON.stringify(report)}; if (window.__AGY_RING_RENDER__) window.__AGY_RING_RENDER__();`,
+            expression: `window.__AGY_RING_DATA__ = null; if (window.__AGY_RING_RENDER__) window.__AGY_RING_RENDER__();`,
             returnByValue: false,
           });
         }

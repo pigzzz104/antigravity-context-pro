@@ -145,6 +145,18 @@ function fileStamp(path) {
 }
 
 function resolveConversationId(requestedId) {
+  // If an explicit conversationId was passed:
+  if (UUID.test(requestedId || '')) {
+    return requestedId;
+  }
+
+  // If requestedId is explicitly empty string, it means no conversation is open
+  if (requestedId === '') {
+    return '';
+  }
+
+  // Only fallback to latestActiveConvId if requestedId was undefined/null
+  // AND latestActiveConvId is valid, recent (< 60s), and exists on disk
   if (
     latestActiveConvId &&
     Date.now() - latestActiveConvAt < 60000 &&
@@ -166,26 +178,8 @@ function resolveConversationId(requestedId) {
     }
   } catch {}
 
-  if (UUID.test(requestedId || '') && existsSync(join(CONVERSATIONS, `${requestedId}.db`))) {
-    return requestedId;
-  }
-
-  try {
-    const files = readdirSync(CONVERSATIONS)
-      .filter((f) => f.endsWith('.db') && UUID.test(f.slice(0, -3)))
-      .map((f) => {
-        const full = join(CONVERSATIONS, f);
-        let mtime = 0;
-        try {
-          mtime = statSync(full).mtimeMs;
-        } catch {}
-        return { id: f.slice(0, -3), mtime };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-    if (files.length > 0) return files[0].id;
-  } catch {}
-
-  return requestedId || '';
+  // Do not guess the newest DB file when no conversation is active
+  return '';
 }
 
 async function report(requestedConversationId, workspaceUri) {
@@ -229,8 +223,8 @@ refreshCatalog();
 startRingInjector({
   sidecarHosted: true,
   onActiveConversation: (id) => {
-    latestActiveConvId = id;
+    latestActiveConvId = id || '';
     latestActiveConvAt = Date.now();
   },
-  getReport: (id) => report(id, ''),
+  getReport: (id) => (id ? report(id, '') : null),
 });
