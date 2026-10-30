@@ -7,6 +7,7 @@ protobufs from the conversation database (`steps` and `gen_metadata` tables).
 """
 
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -274,6 +275,10 @@ def estimate_step_tokens(step: Step) -> int:
         out = step.md.int(23, signed32=True)  # tool_call_output_tokens
         if out > 0:
             return out
+        gen = step.pb.msg(STEP_GENERIC)
+        res = gen.msg(2) if gen is not None else None
+        if res is not None and len(res.bytes(1)) > 0:
+            n += len(res.bytes(1))
     if n == 0:
         return 0
     return max(1, go_div4(n))
@@ -671,6 +676,259 @@ def render(st: dict, model: str, system_files: list[tuple[str, int]], term_width
 # --- main --------------------------------------------------------------------
 
 
+def _dur_ms(m: Msg | None) -> int:
+    if m is None:
+        return 0
+    return round((m.int(1) + m.int(2) / 1e9) * 1000)
+
+
+STEP_TYPE_NAMES = {v: k for k, v in STEP_TYPES.items()}
+
+
+def _clean_snippet(text: str, max_len: int = 240) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r"</?USER_REQUEST>", "", text).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if len(cleaned) > max_len:
+        return cleaned[: max_len - 1] + "…"
+    return cleaned
+
+
+def _summarize_tool_args(name: str, args_raw: str, step: Step | None = None) -> str:
+    try:
+        args = json.loads(args_raw or "{}")
+        if not isinstance(args, dict):
+            args = {}
+    except json.JSONDecodeError:
+        args = {}
+
+    for k in ("Path", "AbsolutePath", "FilePath", "TargetFile", "DirectoryPath"):
+        val = args.get(k)
+        if isinstance(val, str) and val.strip():
+            short = shorten_path(val.strip())
+            sl, el = args.get("StartLine"), args.get("EndLine")
+            if sl or el:
+                short += f":L{sl or 1}-{el or 'end'}"
+            return short
+
+    summary = args.get("toolSummary")
+    cmd = args.get("CommandLine")
+    if isinstance(summary, str) and summary.strip():
+        if isinstance(cmd, str) and cmd.strip():
+            first_line = cmd.strip().splitlines()[0][:44]
+            return f"{summary.strip()} ({first_line})"
+        return summary.strip()
+    if isinstance(cmd, str) and cmd.strip():
+        return cmd.strip().splitlines()[0][:64]
+
+    for k in ("query", "Query", "SearchTerm", "Pattern", "Url", "Uri", "Role"):
+        val = args.get(k)
+        if isinstance(val, str) and val.strip():
+            return val.strip()[:64]
+
+    queries = args.get("queries")
+    if isinstance(queries, list) and queries:
+        return ", ".join(str(x) for x in queries[:3])[:64]
+
+    if step is not None:
+        vf = step.payload(STEP_VIEW_FILE)
+        if vf is not None and vf.str(1):
+            return shorten_path(vf.str(1))
+        ca = step.payload(STEP_CODE_ACTION)
+        res = ca.msg(2) if ca is not None else None
+        ed = res.msg(1) if res is not None else None
+        if ed is not None and ed.str(8):
+            return shorten_path(ed.str(8))
+
+    for v in args.values():
+        if isinstance(v, str) and v.strip():
+            return v.strip().splitlines()[0][:56]
+    return ""
+
+
+def collect_telemetry(db_path: Path, steps: list[Step] | None = None) -> dict:
+    """Extract per-turn and cumulative generation telemetry from gen_metadata + steps."""
+    uri = "file:" + db_path.as_posix() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        rows = conn.execute("SELECT idx, data FROM gen_metadata ORDER BY idx ASC").fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+
+    gm_steps: dict[int, list[tuple[int, Step]]] = {}
+    user_by_gm: dict[int, tuple[str, int]] = {}
+    if steps:
+        pending_user: tuple[str, int] | None = None
+        for pos, s in enumerate(steps):
+            if s.type == 14:  # USER_INPUT
+                ui = s.payload(STEP_USER_INPUT)
+                u_txt = _clean_snippet(ui.str(2) if ui is not None else "", 220)
+                if u_txt:
+                    pending_user = (u_txt, step_tokens(s))
+            gm_link = s.md.msg(20)
+            if gm_link is not None and gm_link.has(3):
+                g_idx = gm_link.int(3)
+                gm_steps.setdefault(g_idx, []).append((pos, s))
+                if pending_user is not None and g_idx not in user_by_gm:
+                    user_by_gm[g_idx] = pending_user
+                    pending_user = None
+
+    turns = []
+    sum_in = sum_cache = sum_out = sum_think = sum_resp = 0
+    sum_ttft = sum_stream = sum_total_ms = 0
+    peak_tps = 0.0
+    peak_prefill = 0
+    prev_prompt_tok = 0
+
+    for idx, blob in rows:
+        gm = Msg(blob)
+        chat = gm.msg(1)
+        if chat is None:
+            continue
+        u = chat.msg(4)
+        if u is None:
+            continue
+        inp = u.int(2)
+        cache = u.int(5)
+        prompt_tok = inp + cache
+        context_delta = prompt_tok - prev_prompt_tok if prev_prompt_tok > 0 else prompt_tok
+        prev_prompt_tok = prompt_tok
+
+        out = u.int(3)
+        think = u.int(9)
+        resp = u.int(10) or max(0, out - think)
+        ttft_ms = _dur_ms(chat.msg(11))
+        stream_ms = _dur_ms(chat.msg(12))
+        total_ms = ttft_ms + stream_ms
+        tps = round(out / (total_ms / 1000.0), 1) if total_ms > 0 else 0.0
+        stream_tps = round(resp / (stream_ms / 1000.0), 1) if stream_ms >= 100 else tps
+        prefill_tps = round(prompt_tok / (ttft_ms / 1000.0)) if ttft_ms > 0 else 0
+        cache_pct = round(cache / prompt_tok * 100.0, 1) if prompt_tok > 0 else 0.0
+
+        sum_in += inp
+        sum_cache += cache
+        sum_out += out
+        sum_think += think
+        sum_resp += resp
+        sum_ttft += ttft_ms
+        sum_stream += stream_ms
+        sum_total_ms += total_ms
+        if tps > peak_tps:
+            peak_tps = tps
+        if prefill_tps > peak_prefill:
+            peak_prefill = prefill_tps
+
+        linked = gm_steps.get(idx, [])
+        pr_entry = next(((p, s) for p, s in linked if s.type == 15), linked[0] if linked else None)
+        traj_step = pr_entry[0] if pr_entry else idx
+        timestamp = ""
+        think_preview = ""
+        resp_preview = ""
+        tools_list = []
+
+        if pr_entry is not None:
+            _, pr_s = pr_entry
+            ts_msg = pr_s.md.msg(1)
+            if ts_msg is not None and ts_msg.int(1) > 0:
+                try:
+                    timestamp = datetime.fromtimestamp(ts_msg.int(1)).strftime("%H:%M:%S")
+                except (OSError, ValueError):
+                    timestamp = ""
+            pr_pay = pr_s.payload(STEP_PLANNER_RESPONSE)
+            if pr_pay is not None:
+                think_preview = _clean_snippet(pr_pay.str(3), 260)
+                resp_preview = _clean_snippet(pr_pay.str(1), 260)
+
+        for _, ts_step in linked:
+            if ts_step.type in (14, 15):
+                continue
+            tc = ts_step.md.msg(4)
+            tname = tc.str(2) if tc is not None and tc.str(2) else STEP_TYPE_NAMES.get(ts_step.type, f"step_{ts_step.type}").lower()
+            targs = tc.str(3) if tc is not None else ""
+            ttok = step_tokens(ts_step)
+            tsum = _summarize_tool_args(tname, targs, ts_step)
+            tools_list.append({
+                "name": tname,
+                "summary": tsum,
+                "tokens": ttok,
+            })
+
+        if not tools_list:
+            cm = chat.msg(2)
+            if cm is not None:
+                for tc in cm.msgs(6):
+                    tname = tc.str(2)
+                    targs = tc.str(3)
+                    if tname:
+                        tools_list.append({
+                            "name": tname,
+                            "summary": _summarize_tool_args(tname, targs, None),
+                            "tokens": max(1, go_div4(len(tc.bytes(3)))),
+                        })
+
+        u_prompt, u_tok = user_by_gm.get(idx, ("", 0))
+
+        turns.append({
+            "step": idx,
+            "traj_step": traj_step,
+            "timestamp": timestamp,
+            "input_tokens": inp,
+            "cache_read_tokens": cache,
+            "prompt_tokens": prompt_tok,
+            "context_delta": context_delta,
+            "cache_hit_pct": cache_pct,
+            "output_tokens": out,
+            "thinking_tokens": think,
+            "response_tokens": resp,
+            "ttft_ms": ttft_ms,
+            "stream_ms": stream_ms,
+            "total_ms": total_ms,
+            "output_tps": tps,
+            "stream_tps": stream_tps,
+            "prefill_tps": prefill_tps,
+            "trace_id": u.str(11),
+            "user_prompt": u_prompt,
+            "user_tokens": u_tok,
+            "thinking_preview": think_preview,
+            "response_preview": resp_preview,
+            "tools": tools_list,
+            "tool_tokens": sum(t["tokens"] for t in tools_list),
+        })
+
+    n = len(turns)
+    total_prompt_all = sum_in + sum_cache
+    avg_tps = round(sum_out / (sum_total_ms / 1000.0), 1) if sum_total_ms > 0 else 0.0
+    avg_ttft_ms = round(sum_ttft / n) if n > 0 else 0
+    avg_prefill_tps = round(total_prompt_all / (sum_ttft / 1000.0)) if sum_ttft > 0 else 0
+    overall_cache_pct = round(sum_cache / total_prompt_all * 100.0, 1) if total_prompt_all > 0 else 0.0
+
+    return {
+        "total_calls": n,
+        "latest": turns[-1] if turns else None,
+        "summary": {
+            "sum_input_tokens": sum_in,
+            "sum_cache_read_tokens": sum_cache,
+            "sum_prompt_tokens": total_prompt_all,
+            "overall_cache_hit_pct": overall_cache_pct,
+            "sum_output_tokens": sum_out,
+            "sum_thinking_tokens": sum_think,
+            "sum_response_tokens": sum_resp,
+            "sum_ttft_ms": sum_ttft,
+            "sum_stream_ms": sum_stream,
+            "sum_total_ms": sum_total_ms,
+            "avg_ttft_ms": avg_ttft_ms,
+            "avg_output_tps": avg_tps,
+            "peak_output_tps": peak_tps,
+            "avg_prefill_tps": avg_prefill_tps,
+            "peak_prefill_tps": peak_prefill,
+        },
+        "recent_turns": list(reversed(turns[-40:])),
+    }
+
+
 def load(db_path: Path) -> tuple[list[Step], Msg | None]:
     uri = "file:" + db_path.as_posix() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
@@ -817,6 +1075,7 @@ def main():
             "artifact_files": [{"path": p, "tokens": t} for p, t in st["artifact_files"]],
             "skill_files": [{"path": p, "tokens": t} for p, t in st["skill_files"]],
             "system_files": [{"path": p} for p, _ in system_files],
+            "telemetry": collect_telemetry(db_path, steps),
         }, indent=2))
         return
 

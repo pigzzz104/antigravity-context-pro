@@ -1,85 +1,89 @@
-# antigravity-desktop-context
+# Antigravity Context Pro
 
-A **Context Usage** side panel for the **Antigravity 2.0 desktop app**, based on the Antigravity CLI's `/context` command.
+**English** | [简体中文](README_ZH.md)
 
-In contrast to other context monitors, which estimate usage from the conversation's transcript (roughly one token per four characters) and sort it into categories of their own, this panel reads the token breakdown that Antigravity records for every model call, the same data the CLI's `/context` uses. The accounting is ported from the CLI binary itself, so the categories, totals, checkpoints and files match `agy /context` on the same conversation, and the context window and model name come live from the app's model catalog.
+A context window monitor and generation telemetry inspector for the **Antigravity 2.0** desktop app (macOS, Windows, and Linux). It combines an **input-box context mini-ring** with a **side-panel context & per-turn call inspector**.
 
-![The agy CLI's built-in /context next to the Context Usage panel in the Antigravity 2.0 desktop app, on the same conversation](docs/img/cli-vs-panel.png)
+> [!NOTE]
+> **Upstream Attribution**
+> This project is forked from [`dimitr-io/antigravity-desktop-context`](https://github.com/dimitr-io/antigravity-desktop-context) (Copyright © 2026 Dimitrios Ioannidis, [MIT License](LICENSE)) and extended with secondary development.
+
+![CLI vs. Side Panel](docs/img/cli-vs-panel.png)
+
+---
+
+## Features
+
+- **Input Box Context Mini-Ring & Telemetry Popover**
+  - Embeds a live context usage ring (`%`) directly into the chat input toolbar next to the send button.
+  - Clicking the ring opens a compact popover showing **Output speed (`t/s`)**, **First token latency (`TTFT`)**, **Prefill throughput**, **Cache hit rate**, **Last turn output**, and **Session output**, plus a one-click button to open the side panel.
+- **Per-Turn Call Inspector (DeepSeek Harness Style)**
+  - Click any turn row under **Recent turns** in the side panel to expand its full telemetry breakdown:
+    - **Context & Prefill**: Total prompt tokens, cache read vs. fresh input split, context delta (`+tok`), and prefill throughput.
+    - **Output & Latency**: Thinking vs. response token split, TTFT, streaming duration, total duration, and generation speed.
+    - **Tool Call Token Bill**: Every tool invoked in that turn (`read_file`, `edit_file`, `run_command`, etc.) with its target file/command summary and exact context token cost.
+    - **Snippets**: Previews of the user prompt, chain-of-thought reasoning, and response text for that turn.
+- **Exact Context Breakdown**
+  - Reads the native SQLite/Protobuf records (`steps` and `gen_metadata`) written by Antigravity 2.0—matching `agy /context` with zero extra token overhead.
+  - Displays a 100-dot usage grid, token usage by category, active checkpoints, and files in context.
+- **Native Lifecycle (Zero Background Daemon)**
+  - Runs inside Antigravity's built-in sidecar supervisor (`main.mjs`): starts automatically when Antigravity launches and exits immediately when Antigravity quits.
+
+---
 
 ## Installation
 
-Requires the Antigravity 2.0 desktop app and Python 3 on your `PATH` (`python`, `py` or `python3`).
+Requires **Antigravity 2.0 Desktop** and **Python 3** on your `PATH` (`python3`, `python`, or `py`).
 
-1. Clone this repository into your Antigravity plugins folder:
+### 1. Clone into the Antigravity plugins directory
 
-   ```bash
-   # macOS / Linux
-   git clone https://github.com/dimitr-io/antigravity-desktop-context.git ~/.gemini/config/plugins/desktop-context
-   ```
-
-   ```powershell
-   # Windows (PowerShell)
-   git clone https://github.com/dimitr-io/antigravity-desktop-context.git "$HOME\.gemini\config\plugins\desktop-context"
-   ```
-
-2. Restart Antigravity, open **Customizations → Installed**, and turn **Context Usage** on.
-3. Open a conversation and open **Context Usage** in the right-side panel.
-
-To update, run `git pull` inside that folder, then turn the plugin off and on again.
-
-## What it shows
-
-The report follows the CLI's `/context` (`cli/model.ContextModel` in agy 1.4.4), ported from the CLI binary:
-
-- **Header**: model name, used/limit tokens and percentage.
-- **Usage grid**: each dot is 1% of the context window. Segments, in order: system (prompt + tools + overhead), user messages, agent responses, tool calls, customizations, then free space. Every non-empty segment gets at least one dot.
-- **Token usage**: `User messages`, `Agent responses` and `Tool calls` always show; `System messages`, `System prompt`, `System tools`, `System overhead`, `Rules`, `Skills`, `Subagents`, `Legacy workflows`, `Workflows`, `Plugins` and `MCP tools` show only when non-zero. Then `Free space`, and the `Checkpoint buffer` (tokens in checkpoint steps, not counted in usage).
-- **Before the first reply, or right after a compaction**: per-step estimates, like the CLI ("Estimated usage (awaiting generation)" / "Estimated after compaction · updates next turn").
-- **Checkpoints**: the active checkpoint and how many older ones were summarized.
-- **Files**: knowledge and artifact files written by the agent, skill files it opened (with the tokens those steps cost), and the auto-loaded system folders, including the workspace's `.agents/` folders.
-
-
-## How it works
-
-```
-plugin.json               plugin manifest
-sidecars/context/
-  sidecar.json            registers the side panel (runs main.mjs with Antigravity's Node)
-  main.mjs                backend: serves the panel and /api/report
-  index.html              the panel (inline CSS and JS)
-  context_report.py       the parser
-tests/                    parser tests
+**macOS / Linux**
+```bash
+git clone https://github.com/pigzzz104/antigravity-context-pro.git ~/.gemini/config/plugins/desktop-context
 ```
 
-- The panel gets the open conversation's ID and workspace folders from Antigravity's sidecar bridge and asks the backend for a report every 3 seconds.
-- The backend runs `context_report.py --json` on the conversation's database (`~/.gemini/antigravity/conversations/<id>.db`, opened read-only), but only when the database has changed. Otherwise it returns the cached report.
-- On startup and every 10 minutes, the backend asks the app's language server for its model catalog (`GetAvailableModels`), so the context window and model name come from the app, like in the CLI. If that call fails, the parser falls back to a built-in table (Gemini 1,048,576 · Claude 5.5 1,000,000 · Claude 4.6 250,000 · GPT-OSS 131,072 tokens).
+**Windows (PowerShell)**
+```powershell
+git clone https://github.com/pigzzz104/antigravity-context-pro.git "$HOME\.gemini\config\plugins\desktop-context"
+```
 
-The context window shown is the model's native window, as in the CLI. Each request also has a smaller budget (usually 256,000 tokens): once a conversation passes it, the app trims older history even though the window is larger ([details](https://github.com/lmxxf/antigravity-context-fix)). The parser's `--json` output reports it as `request_budget_tokens`.
+### 2. Enable the plugin
 
-## Command line and testing
+1. Restart Antigravity 2.0.
+2. Open **Customizations → Installed** and enable **Context Usage**.
+3. The **Input Box Mini-Ring** will appear in the chat input bar automatically, and **Context Usage** will be available in the right-hand side panel (both via the ring popover and in the `+` New Tab menu).
 
-The parser also runs on its own. It prints the CLI's text report:
+---
+
+## Enhancements Over Upstream
+
+| Area | Upstream (`antigravity-desktop-context`) | This Fork (`antigravity-context-pro`) |
+| :--- | :--- | :--- |
+| **Chat Input Bar** | None (side panel only) | Live SVG context ring + floating telemetry popover |
+| **Generation Telemetry** | Not collected | Output speed (`t/s`), TTFT, prefill throughput, cache hit % |
+| **Turn History** | None | Clickable per-turn inspector with tool token bill & snippets |
+| **Side Panel Access** | Hidden behind search unless manually pinned | Injected into the `+` New Tab list & linked from input ring popover |
+| **Pinned Tab Sync** | Fails with `no-conversation` or freezes on old chat | Automatically tracks the active conversation in real time |
+| **Outside-of-Project Mode** | Hangs indefinitely on `Loading…` (`getWorkspaceUris`) | Loads immediately (`< 200ms`) without blocking |
+| **Tool Token Accounting** | Counts only argument bytes (`~32 tok`) for `read_file` | Includes full tool output payload bytes |
+
+---
+
+## CLI Usage & Testing
+
+You can also run the parser directly from the terminal:
 
 ```bash
-# The most recently active desktop conversation
-python sidecars/context/context_report.py
+# Inspect the most recently active conversation
+python3 sidecars/context/context_report.py
 
-# A specific conversation, with its workspace
-python sidecars/context/context_report.py --conversation-id <uuid> --workspace /path/to/workspace
+# Output structured JSON (including telemetry and per-turn details)
+python3 sidecars/context/context_report.py --json
 
-# Any conversation database, e.g. one from the agy CLI; --json for structured output
-python sidecars/context/context_report.py --db ~/.gemini/antigravity-cli/conversations/<uuid>.db
+# Run unit tests
+python3 -m unittest discover tests
 ```
-
-The test suite needs only the Python standard library. It builds synthetic conversation databases and checks the report end to end:
-
-```bash
-python -m unittest discover tests
-```
-
-To compare against the real CLI, open a conversation in `agy`, run `/context`, then run the parser with `--db` on the same conversation. The CLI logs the open conversation's ID in `~/.gemini/antigravity-cli/cli.log`, on the latest `Starting conversation update stream for <uuid>` line. The categories, totals, checkpoints and file lists should match.
 
 ## License
 
-[MIT](LICENSE)
+[MIT License](LICENSE) — Original work Copyright © 2026 Dimitrios Ioannidis (`dimitr-io/antigravity-desktop-context`); secondary development and enhancements licensed under MIT.

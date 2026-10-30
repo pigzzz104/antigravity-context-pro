@@ -1,18 +1,20 @@
-// Sidecar backend for the Context Usage panel.
+// Sidecar backend for the Context Usage panel & Input Box Context Ring.
 //
-// Serves the panel and a /api/report endpoint that runs context_report.py (the
-// same parser as the /context skill) on the open conversation's database. The
-// model's context window and display name come from the app's live model
-// catalog (GetAvailableModels), like the agy CLI.
+// Forked from https://github.com/dimitr-io/antigravity-desktop-context (MIT License)
+// Enhanced with:
+// - Cross-platform active conversation tracking (so pinned tabs never break)
+// - Native hosting of the Input Box Context Ring & Telemetry Popover injector
+// - DeepSeek Harness-style per-turn call telemetry & tool token inspection
 
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Response, SidecarApp } from 'sidecar_sdk';
+import { ACTIVE_CONV_FILE, startRingInjector } from './inject-ring.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, 'context_report.py');
@@ -22,6 +24,9 @@ const DATA_DIR = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR || join(HERE, '.dat
 const CATALOG_PATH = join(DATA_DIR, 'model-catalog.json');
 const CATALOG_TTL_MS = 10 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+let latestActiveConvId = '';
+let latestActiveConvAt = 0;
 
 const app = new SidecarApp();
 
@@ -139,7 +144,52 @@ function fileStamp(path) {
   }
 }
 
-async function report(conversationId, workspaceUri) {
+function resolveConversationId(requestedId) {
+  if (
+    latestActiveConvId &&
+    Date.now() - latestActiveConvAt < 60000 &&
+    UUID.test(latestActiveConvId) &&
+    existsSync(join(CONVERSATIONS, `${latestActiveConvId}.db`))
+  ) {
+    return latestActiveConvId;
+  }
+
+  try {
+    if (existsSync(ACTIVE_CONV_FILE)) {
+      const st = statSync(ACTIVE_CONV_FILE);
+      if (Date.now() - st.mtimeMs < 60000) {
+        const activeId = readFileSync(ACTIVE_CONV_FILE, 'utf8').trim();
+        if (UUID.test(activeId) && existsSync(join(CONVERSATIONS, `${activeId}.db`))) {
+          return activeId;
+        }
+      }
+    }
+  } catch {}
+
+  if (UUID.test(requestedId || '') && existsSync(join(CONVERSATIONS, `${requestedId}.db`))) {
+    return requestedId;
+  }
+
+  try {
+    const files = readdirSync(CONVERSATIONS)
+      .filter((f) => f.endsWith('.db') && UUID.test(f.slice(0, -3)))
+      .map((f) => {
+        const full = join(CONVERSATIONS, f);
+        let mtime = 0;
+        try {
+          mtime = statSync(full).mtimeMs;
+        } catch {}
+        return { id: f.slice(0, -3), mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files.length > 0) return files[0].id;
+  } catch {}
+
+  return requestedId || '';
+}
+
+async function report(requestedConversationId, workspaceUri) {
+  const conversationId = resolveConversationId(requestedConversationId);
   if (!UUID.test(conversationId || '')) {
     return { error: 'no-conversation' };
   }
@@ -175,3 +225,12 @@ app.api('/api/report', async (data) => {
 
 app.run();
 refreshCatalog();
+
+startRingInjector({
+  sidecarHosted: true,
+  onActiveConversation: (id) => {
+    latestActiveConvId = id;
+    latestActiveConvAt = Date.now();
+  },
+  getReport: (id) => report(id, ''),
+});

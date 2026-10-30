@@ -1,6 +1,6 @@
-*$py.class
-*.py[cod]
-.DS_Store
-.data/
-.env
 __pycache__/
+*.py[cod]
+*$py.class
+.data/
+.DS_Store
+node_modules/

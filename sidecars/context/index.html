@@ -15,17 +15,18 @@
     --c-sysmsg: #f28b82;
     --fg: var(--foreground, #e3e3e3);
     --dim: var(--muted-foreground, #9aa0a6);
-    --line: var(--border, rgba(127, 127, 127, .25));
+    --line: var(--border, rgba(127, 127, 127, .22));
     --empty: color-mix(in srgb, var(--dim) 28%, transparent);
+    --surface: color-mix(in srgb, var(--fg) 4%, transparent);
+    --surface-hover: color-mix(in srgb, var(--fg) 7%, transparent);
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     color: var(--fg);
-    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  /* thin overlay-style scrollbar instead of the platform default */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
   ::-webkit-scrollbar-button { display: none; }
@@ -37,7 +38,6 @@
   }
   ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--dim) 55%, transparent); }
 
-  /* preload.js zeroes the body's padding, so the page padding lives here */
   main { padding: 12px 14px 18px; }
   .dim { color: var(--dim); }
   .num { font-variant-numeric: tabular-nums; }
@@ -52,19 +52,19 @@
   .usage .of { color: var(--dim); }
   .usage .pct { margin-left: auto; font-size: 13px; font-weight: 600; }
   button {
-    font: inherit; font-size: 12px; color: var(--dim); cursor: pointer; white-space: nowrap;
-    background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px;
+    font: inherit; font-size: 11.5px; color: var(--dim); cursor: pointer; white-space: nowrap;
+    background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 2.5px 8px;
+    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
   }
-  button:hover { color: var(--fg); border-color: var(--dim); }
+  button:hover { color: var(--fg); border-color: var(--dim); background: var(--surface); }
 
   /* grid: each dot is 1% of the context window */
   .grid { display: grid; grid-template-columns: repeat(20, 1fr); gap: 4px; max-width: 320px; margin-bottom: 4px; }
   .dot { aspect-ratio: 1; border-radius: 50%; background: var(--empty); }
-  .legend { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
 
   /* sections */
   section { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
-  h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 6px; display: flex; justify-content: space-between; }
+  h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   h2 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; }
   .note { font-size: 12px; color: var(--dim); margin: -2px 0 8px; }
   .group + .group { margin-top: 8px; }
@@ -74,6 +74,190 @@
   .mark { width: 8px; height: 8px; border-radius: 50%; }
   .mark.sq { border-radius: 2px; }
   .mark.free { background: transparent; border: 1.5px solid var(--empty); }
+
+  /* interactive per-turn inspector (DeepSeek Harness style) */
+  .turn-list { display: flex; flex-direction: column; gap: 2px; }
+  details.turn-item {
+    border-radius: 7px;
+    border: 1px solid transparent;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  details.turn-item:hover {
+    background: var(--surface);
+  }
+  details.turn-item[open] {
+    background: var(--surface);
+    border-color: var(--line);
+    margin: 2px 0;
+  }
+  summary.turn-summary {
+    list-style: none;
+    display: grid;
+    grid-template-columns: 12px 36px 1fr 68px 46px 54px;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    font-size: 11.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  summary.turn-summary::-webkit-details-marker { display: none; }
+  .turn-chev {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+    opacity: 0.65;
+    transition: transform 0.14s ease;
+  }
+  details.turn-item[open] .turn-chev {
+    transform: rotate(90deg);
+    color: var(--fg);
+    opacity: 0.9;
+  }
+  .turn-main {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .turn-tag {
+    font-size: 10px;
+    line-height: 1.3;
+    padding: 0 5px;
+    border-radius: 4px;
+    color: var(--dim);
+    border: 1px solid var(--line);
+    flex: none;
+  }
+  .turn-tag.user {
+    color: var(--c-user);
+    border-color: color-mix(in srgb, var(--c-user) 35%, transparent);
+  }
+
+  .turn-detail {
+    border-top: 1px solid var(--line);
+    padding: 9px 10px 10px;
+    font-size: 11.5px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .td-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--dim);
+    flex-wrap: wrap;
+  }
+  .td-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 340px) {
+    .td-cards { grid-template-columns: 1fr; }
+  }
+  .td-card {
+    padding: 7px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--fg) 2%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 3.5px;
+  }
+  .td-card-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dim);
+    margin-bottom: 1px;
+  }
+  .td-bar {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--empty);
+    overflow: hidden;
+    display: flex;
+    margin-bottom: 3px;
+  }
+  .td-kv {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .td-kv .k { color: var(--dim); }
+  .td-kv .v { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  .td-box {
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--fg) 2%, transparent);
+  }
+  .td-box-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dim);
+    margin-bottom: 4px;
+  }
+  .td-snippet {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--fg);
+    opacity: 0.88;
+    word-break: break-word;
+  }
+  .td-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .td-tool-row {
+    display: grid;
+    grid-template-columns: 13px auto 1fr auto;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 2px 0;
+  }
+  .td-tool-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--dim);
+    opacity: 0.7;
+  }
+  .td-tool-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10.5px;
+    color: var(--c-tool);
+    white-space: nowrap;
+  }
+  .td-tool-sum {
+    color: var(--dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .td-tool-tok {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+  }
 
   .files li { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 3px 0; }
   .files .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -97,22 +281,27 @@
   const CONVERSATION = { user: 'var(--c-user)', agent: 'var(--c-agent)', tool: 'var(--c-tool)', system_messages: 'var(--c-sysmsg)' };
   const SYSTEM = new Set(['system_prompt', 'system_tools', 'system_overhead']);
   const params = new URLSearchParams(location.search);
-  const conversationId = (window.sidecar && window.sidecar.conversationId) || params.get('conversationId') || '';
+  const initialConversationId = (window.sidecar && window.sidecar.conversationId) || params.get('conversationId') || '';
   const doFetch = (window.sidecar && window.sidecar.fetch) || fetch;
   const main = document.getElementById('main');
   let workspace = '';
   let report = null;
   let lastJson = '';
+  let selectedTurnStep = null;
+  let showAllTurns = false;
 
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const SVG_CHEVRON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  const SVG_TOOL = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   function fmtTok(n) {
-    if (n >= 1e6) { const v = n / 1e6; return Number.isInteger(v) ? `${v}M` : `${v.toFixed(1)}M`; }
-    if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-    return String(n);
+    const val = Number(n) || 0;
+    if (val >= 1e6) { const v = val / 1e6; return Number.isInteger(v) ? `${v}M` : `${v.toFixed(1)}M`; }
+    if (val >= 1e3) return `${(val / 1e3).toFixed(1)}k`;
+    return String(val);
   }
 
-  // The CLI's cell allocation: at least one cell per non-empty segment, scaled down on overflow.
   function gridCells(segments, limit, total) {
     let counts = segments.map((t) => (!t || !limit ? 0 : Math.max(1, Math.floor(t / limit * total))));
     const used = counts.reduce((a, b) => a + b, 0);
@@ -129,7 +318,7 @@
     return `<div class="grid" title="Each dot is 1% of the context window">${dots}</div>`;
   }
 
-  function categoryRow(c, limit) {
+  function categoryRow(c) {
     const color = CONVERSATION[c.key] || (SYSTEM.has(c.key) ? 'var(--c-system)' : 'var(--c-custom)');
     const shape = CONVERSATION[c.key] ? '' : ' sq';
     return `<div class="row"><span class="mark${shape}" style="background:${color}"></span><span>${esc(c.name)}</span>`
@@ -147,8 +336,8 @@
     const buffer = r.checkpoint_buffer
       ? `<p class="note">Checkpoint buffer: ${fmtTok(r.checkpoint_buffer)} tokens (not counted in usage)</p>` : '';
     return `<section><h2>Token usage</h2>${note}
-      <div class="group">${conv.map((c) => categoryRow(c, limit)).join('')}</div>
-      ${rest.length ? `<div class="group">${rest.map((c) => categoryRow(c, limit)).join('')}</div>` : ''}
+      <div class="group">${conv.map((c) => categoryRow(c)).join('')}</div>
+      ${rest.length ? `<div class="group">${rest.map((c) => categoryRow(c)).join('')}</div>` : ''}
       <div class="group">${free}</div>${buffer}</section>`;
   }
 
@@ -160,27 +349,191 @@
       <div class="ck-main"><span>Checkpoint ${ck.active_number}: ${esc(ck.active_text)}</span><span class="badge">in context</span></div>${older}</section>`;
   }
 
-  function splitPath(path) {
+  function splitPath(path, activeConvId) {
     const trimmed = path.replace(/\/$/, '');
     const i = trimmed.lastIndexOf('/');
     const name = trimmed.slice(i + 1) + (path.endsWith('/') ? '/' : '');
     let dir = i > 0 ? trimmed.slice(0, i) : '';
-    if (conversationId) dir = dir.replace(new RegExp(`^.*/brain/${conversationId}`), 'conversation folder');
+    const cid = activeConvId || initialConversationId;
+    if (cid) dir = dir.replace(new RegExp(`^.*/brain/${cid}`), 'conversation folder');
     return { name, dir };
   }
 
-  function files(title, hint, items) {
+  function files(title, hint, items, activeConvId) {
     if (!items || !items.length) return '';
     const rows = items.map((f) => {
-      const { name, dir } = splitPath(f.path);
+      const { name, dir } = splitPath(f.path, activeConvId);
       return `<li title="${esc(f.path)}"><span class="name">${esc(name)}<span class="dir">‎${esc(dir)}</span></span>`
         + `<span class="tok num">${f.tokens > 0 ? fmtTok(f.tokens) : ''}</span></li>`;
     }).join('');
     return `<section><h2>${title} <span class="hint">${hint}</span></h2><ul class="files">${rows}</ul></section>`;
   }
 
+  function fmtSec(ms) {
+    if (!ms || ms <= 0) return '0.00s';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+  }
+
+  function telemetrySection(r) {
+    const t = r.telemetry;
+    if (!t || !t.latest) return '';
+    const cur = t.latest;
+    const sum = t.summary || {};
+    return `
+      <section>
+        <h2>Performance <span class="hint">Step #${cur.step} · ${t.total_calls} turns</span></h2>
+        <div class="group">
+          <div class="row"><span class="mark" style="background:#81c995"></span><span>Output speed (latest / peak)</span><span class="tok num">${cur.output_tps} t/s</span><span class="p num">${sum.peak_output_tps || 0}</span></div>
+          <div class="row"><span class="mark" style="background:#4c8df6"></span><span>First token TTFT (latest / avg)</span><span class="tok num">${fmtSec(cur.ttft_ms)}</span><span class="p num">${fmtSec(sum.avg_ttft_ms)}</span></div>
+          <div class="row"><span class="mark" style="background:#a8c7fa"></span><span>Prefill throughput (latest / avg)</span><span class="tok num">${fmtTok(cur.prefill_tps)}/s</span><span class="p num">${fmtTok(sum.avg_prefill_tps || 0)}/s</span></div>
+          <div class="row"><span class="mark" style="background:#f9ab00"></span><span>Cache hit (latest / session)</span><span class="tok num">${cur.cache_hit_pct}%</span><span class="p num">${sum.overall_cache_hit_pct || 0}%</span></div>
+          <div class="row"><span class="mark sq" style="background:#c58af9"></span><span>Turn output (total / think)</span><span class="tok num">${fmtTok(cur.output_tokens)}</span><span class="p num">${fmtTok(cur.thinking_tokens)}</span></div>
+          <div class="row"><span class="mark sq" style="background:#9aa0a6"></span><span>Session output (total / think)</span><span class="tok num">${fmtTok(sum.sum_output_tokens || 0)}</span><span class="p num">${fmtTok(sum.sum_thinking_tokens || 0)}</span></div>
+        </div>
+      </section>`;
+  }
+
+  function renderTurnDetail(tr) {
+    const cachePct = Math.min(100, Math.max(0, Number(tr.cache_hit_pct) || 0));
+    const freshPct = Math.max(0, 100 - cachePct);
+    const outTotal = Math.max(1, Number(tr.output_tokens) || 1);
+    const thinkPct = Math.min(100, Math.max(0, ((Number(tr.thinking_tokens) || 0) / outTotal) * 100));
+    const respPct = Math.max(0, 100 - thinkPct);
+    const delta = Number(tr.context_delta) || 0;
+    const deltaStr = (delta >= 0 ? '+' : '') + fmtTok(delta);
+
+    const tools = Array.isArray(tr.tools) ? tr.tools : [];
+    const toolsHtml = tools.length
+      ? `<div class="td-box">
+          <div class="td-box-head">
+            <span>Tool calls (${tools.length})</span>
+            <span class="num">+${fmtTok(tr.tool_tokens || 0)} tok</span>
+          </div>
+          <div class="td-tools">
+            ${tools.map((tc) => `
+              <div class="td-tool-row" title="${esc(tc.summary)}">
+                <span class="td-tool-icon">${SVG_TOOL}</span>
+                <span class="td-tool-name">${esc(tc.name)}</span>
+                <span class="td-tool-sum">${esc(tc.summary || '')}</span>
+                <span class="td-tool-tok">+${fmtTok(tc.tokens || 0)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>`
+      : '';
+
+    const userHtml = tr.user_prompt
+      ? `<div class="td-box">
+          <div class="td-box-head">
+            <span style="color:var(--c-user)">User input</span>
+            <span class="num">${fmtTok(tr.user_tokens || 0)} tok</span>
+          </div>
+          <div class="td-snippet">${esc(tr.user_prompt)}</div>
+        </div>`
+      : '';
+
+    const thinkHtml = tr.thinking_preview
+      ? `<div class="td-box">
+          <div class="td-box-head">
+            <span>Thinking snippet</span>
+            <span class="num">${fmtTok(tr.thinking_tokens || 0)} tok</span>
+          </div>
+          <div class="td-snippet dim">${esc(tr.thinking_preview)}</div>
+        </div>`
+      : '';
+
+    const respHtml = tr.response_preview
+      ? `<div class="td-box">
+          <div class="td-box-head">
+            <span>Response snippet</span>
+            <span class="num">${fmtTok(tr.response_tokens || 0)} tok</span>
+          </div>
+          <div class="td-snippet">${esc(tr.response_preview)}</div>
+        </div>`
+      : '';
+
+    return `
+      <div class="turn-detail">
+        <div class="td-meta">
+          <span class="num">Turn #${tr.step}${tr.traj_step !== undefined ? ` · Step #${tr.traj_step}` : ''}${tr.timestamp ? ` · ${esc(tr.timestamp)}` : ''}</span>
+          <span class="num">Delta ${deltaStr}${tr.trace_id ? ` · ${esc(tr.trace_id.slice(0, 12))}` : ''}</span>
+        </div>
+        <div class="td-cards">
+          <div class="td-card">
+            <div class="td-card-title">Context &amp; Prefill</div>
+            <div class="td-bar">
+              <div style="width:${cachePct.toFixed(1)}%;background:#f9ab00"></div>
+              <div style="width:${freshPct.toFixed(1)}%;background:#4c8df6"></div>
+            </div>
+            <div class="td-kv"><span class="k">Prompt total</span><span class="v">${(tr.prompt_tokens || 0).toLocaleString()}</span></div>
+            <div class="td-kv"><span class="k">Cache read</span><span class="v">${(tr.cache_read_tokens || 0).toLocaleString()} (${cachePct}%)</span></div>
+            <div class="td-kv"><span class="k">Fresh input</span><span class="v">${(tr.input_tokens || 0).toLocaleString()}</span></div>
+            <div class="td-kv"><span class="k">Prefill speed</span><span class="v">${fmtTok(tr.prefill_tps || 0)}/s</span></div>
+          </div>
+          <div class="td-card">
+            <div class="td-card-title">Output &amp; Latency</div>
+            <div class="td-bar">
+              <div style="width:${thinkPct.toFixed(1)}%;background:#c58af9"></div>
+              <div style="width:${respPct.toFixed(1)}%;background:#81c995"></div>
+            </div>
+            <div class="td-kv"><span class="k">Output total</span><span class="v">${(tr.output_tokens || 0).toLocaleString()}</span></div>
+            <div class="td-kv"><span class="k">Think / Resp</span><span class="v">${(tr.thinking_tokens || 0).toLocaleString()} / ${(tr.response_tokens || 0).toLocaleString()}</span></div>
+            <div class="td-kv"><span class="k">TTFT / Stream</span><span class="v">${fmtSec(tr.ttft_ms)} / ${fmtSec(tr.stream_ms)}</span></div>
+            <div class="td-kv"><span class="k">Total / Speed</span><span class="v">${fmtSec(tr.total_ms)} · ${tr.output_tps} t/s</span></div>
+          </div>
+        </div>
+        ${userHtml}
+        ${toolsHtml}
+        ${thinkHtml}
+        ${respHtml}
+      </div>`;
+  }
+
+  function turnsSection(r) {
+    const t = r.telemetry;
+    if (!t || !Array.isArray(t.recent_turns) || !t.recent_turns.length) return '';
+    const allTurns = t.recent_turns;
+    const visibleTurns = showAllTurns ? allTurns : allTurns.slice(0, 12);
+    const toggleBtn = allTurns.length > 12
+      ? `<button type="button" id="toggle-turns-btn" style="padding:1px 6px;font-size:10.5px;">${showAllTurns ? 'Recent 12' : `All ${allTurns.length}`}</button>`
+      : '';
+
+    const turnsHtml = visibleTurns.map((tr) => {
+      const isOpen = selectedTurnStep === tr.step;
+      const toolCount = Array.isArray(tr.tools) ? tr.tools.length : 0;
+      return `
+        <details class="turn-item" name="turn-inspector" data-step="${tr.step}" ${isOpen ? 'open' : ''}>
+          <summary class="turn-summary" title="Click to inspect Turn #${tr.step}">
+            <span class="turn-chev">${SVG_CHEVRON}</span>
+            <span class="dim num">#${tr.step}</span>
+            <span class="turn-main num">
+              <span>${fmtTok(tr.prompt_tokens)} <span class="dim">(${tr.cache_hit_pct}%)</span></span>
+              ${tr.user_prompt ? '<span class="turn-tag user">user</span>' : ''}
+              ${toolCount > 0 ? `<span class="turn-tag">${toolCount}t</span>` : ''}
+            </span>
+            <span class="num" style="text-align:right">${fmtTok(tr.output_tokens)}<span class="dim">/${fmtTok(tr.thinking_tokens)}</span></span>
+            <span class="num dim" style="text-align:right">${fmtSec(tr.ttft_ms)}</span>
+            <span class="num" style="text-align:right">${tr.output_tps} t/s</span>
+          </summary>
+          ${renderTurnDetail(tr)}
+        </details>`;
+    }).join('');
+
+    return `
+      <section>
+        <h2>
+          <span>Recent turns <span class="hint">Click row to inspect</span></span>
+          ${toggleBtn}
+        </h2>
+        <div class="turn-list">${turnsHtml}</div>
+      </section>`;
+  }
+
   function render(r) {
+    const scrollY = window.scrollY;
     const limit = r.limit_tokens;
+    const cid = r.conversation_id || initialConversationId;
     main.innerHTML = `
       <div class="top">
         <div class="model"><span class="live on" title="Live"></span>${esc(r.model)}</div>
@@ -193,13 +546,39 @@
       </div>
       ${grid(r)}
       ${categories(r)}
+      ${telemetrySection(r)}
+      ${turnsSection(r)}
       ${checkpoints(r)}
-      ${files('Knowledge files', '/rules', r.knowledge_files)}
-      ${files('Artifact files', '/artifact', r.artifact_files)}
-      ${files('Skill files', '/skill', r.skill_files)}
-      ${files('System files', 'auto-loaded', r.system_files)}
+      ${files('Knowledge files', '/rules', r.knowledge_files, cid)}
+      ${files('Artifact files', '/artifact', r.artifact_files, cid)}
+      ${files('Skill files', '/skill', r.skill_files, cid)}
+      ${files('System files', 'auto-loaded', r.system_files, cid)}
       <footer><span>Related: /artifact · /skill · /rewind</span><span>Updated ${esc(new Date(r.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span></footer>`;
+
     document.getElementById('copy').addEventListener('click', copy);
+
+    const toggleBtn = document.getElementById('toggle-turns-btn');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        showAllTurns = !showAllTurns;
+        render(r);
+      });
+    }
+
+    document.querySelectorAll('details.turn-item').forEach((det) => {
+      det.addEventListener('toggle', () => {
+        const step = Number(det.dataset.step);
+        if (det.open) {
+          selectedTurnStep = step;
+        } else if (selectedTurnStep === step) {
+          selectedTurnStep = null;
+        }
+      });
+    });
+
+    if (scrollY > 0) {
+      window.scrollTo(0, scrollY);
+    }
   }
 
   function showMessage(text) {
@@ -226,15 +605,16 @@
   }
 
   async function refresh() {
-    if (document.hidden) return;
+    if (document.hidden && report !== null) return;
     try {
-      const qs = new URLSearchParams({ conversationId, workspace });
+      const qs = new URLSearchParams({ conversationId: initialConversationId, workspace });
       const res = await doFetch(`/api/report?${qs}`);
       const data = await res.json();
       if (data.error === 'no-conversation') return showMessage('Open a conversation to see its context usage.');
       if (data.error === 'no-database') return showMessage('This conversation has no saved data yet. Send a message first.');
       if (data.error) return showMessage(`Couldn't read this conversation: ${data.message || data.error}`);
-      const json = JSON.stringify(data);
+      const compareObj = { ...data, updatedAt: '' };
+      const json = JSON.stringify(compareObj);
       if (json === lastJson) return;
       lastJson = json;
       report = data;
@@ -247,16 +627,27 @@
 
   document.addEventListener('visibilitychange', refresh);
 
-  async function start() {
-    if (window.sidecar && window.sidecar.getWorkspaceUris) {
-      const uris = await window.sidecar.getWorkspaceUris();
-      workspace = uris[0] || '';
-      window.sidecar.onWorkspaceChange((next) => {
-        if ((next[0] || '') !== workspace) { workspace = next[0] || ''; lastJson = ''; refresh(); }
-      });
-    }
+  function start() {
     refresh();
     setInterval(refresh, POLL_MS);
+    if (window.sidecar && window.sidecar.getWorkspaceUris) {
+      window.sidecar.getWorkspaceUris().then((uris) => {
+        if (Array.isArray(uris) && (uris[0] || '') !== workspace) {
+          workspace = uris[0] || '';
+          lastJson = '';
+          refresh();
+        }
+      }).catch(() => {});
+      if (window.sidecar.onWorkspaceChange) {
+        window.sidecar.onWorkspaceChange((next) => {
+          if (Array.isArray(next) && (next[0] || '') !== workspace) {
+            workspace = next[0] || '';
+            lastJson = '';
+            refresh();
+          }
+        });
+      }
+    }
   }
   start();
 })();
