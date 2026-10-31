@@ -8,7 +8,7 @@ A context window monitor and generation telemetry inspector for the **Antigravit
 > **Upstream Attribution**
 > This project is forked from [`dimitr-io/antigravity-desktop-context`](https://github.com/dimitr-io/antigravity-desktop-context) (Copyright © 2026 Dimitrios Ioannidis, [MIT License](LICENSE)) and extended with secondary development.
 
-![CLI vs. Side Panel](docs/img/cli-vs-panel.png)
+![Context Pro: Mini-Ring, Telemetry Popover & Growth Curve Panel](docs/img/cli-vs-panel.png)
 
 ---
 

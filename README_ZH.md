@@ -8,7 +8,7 @@
 > **致谢与来源说明（Fork Attribution）**
 > 本项目侧边栏与基础解析器 **Fork 自 [`dimitr-io/antigravity-desktop-context`](https://github.com/dimitr-io/antigravity-desktop-context)**（原作者 Dimitrios Ioannidis，遵循 [MIT License](LICENSE)），并在此基础上进行了深度二次开发与问题修复。
 
-![CLI 与侧边栏对比](docs/img/cli-vs-panel.png)
+![Antigravity Context Pro 全界面概览（输入框小圆环、性能浮窗与侧边栏增长曲线）](docs/img/cli-vs-panel.png)
 
 ---
 
