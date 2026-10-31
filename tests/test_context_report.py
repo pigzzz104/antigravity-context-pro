@@ -245,6 +245,21 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(r["checkpoint_buffer"], 20)
         self.assertNotIn(20, [v for k, v in r["by_name"].items()])
 
+    def test_telemetry_turns_curve(self):
+        self.basic_steps()
+        self.db.generation([group(7, 300, ("0: USER_INPUT", 300))], usage=usage(input_tokens=1000, output=150))
+        self.db.generation([group(7, 500, ("0: USER_INPUT", 300), ("1: AGENT", 200))], usage=usage(input_tokens=1500, output=200))
+        r = self.report()
+        tel = r.get("telemetry", {})
+        self.assertEqual(tel["total_calls"], 2)
+        curve = tel.get("turns_curve", [])
+        self.assertEqual(len(curve), 2)
+        self.assertEqual(curve[0]["step"], 0)
+        self.assertEqual(curve[0]["prompt_tokens"], 1000)
+        self.assertEqual(curve[1]["step"], 1)
+        self.assertEqual(curve[1]["prompt_tokens"], 1500)
+        self.assertEqual(curve[1]["context_delta"], 500)
+
     # --- files ---
 
     def test_file_sections(self):

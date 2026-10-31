@@ -926,6 +926,24 @@ def collect_telemetry(db_path: Path, steps: list[Step] | None = None) -> dict:
             "peak_prefill_tps": peak_prefill,
         },
         "recent_turns": list(reversed(turns[-40:])),
+        "turns_curve": [
+            {
+                "step": t["step"],
+                "traj_step": t["traj_step"],
+                "prompt_tokens": t["prompt_tokens"],
+                "context_delta": t["context_delta"],
+                "cache_read_tokens": t["cache_read_tokens"],
+                "input_tokens": t["input_tokens"],
+                "output_tokens": t["output_tokens"],
+                "thinking_tokens": t["thinking_tokens"],
+                "cache_hit_pct": t["cache_hit_pct"],
+                "timestamp": t["timestamp"],
+                "user_prompt": t["user_prompt"],
+                "tool_count": len(t["tools"]),
+                "tool_summary": ", ".join(x["name"] for x in t["tools"][:2]),
+            }
+            for t in turns
+        ],
     }
 
 

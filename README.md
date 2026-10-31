@@ -17,6 +17,10 @@ A context window monitor and generation telemetry inspector for the **Antigravit
 - **Input Box Context Mini-Ring & Telemetry Popover**
   - Embeds a live context usage ring (`%`) directly into the chat input toolbar next to the send button.
   - Clicking the ring opens a compact popover showing **Output speed (`t/s`)**, **First token latency (`TTFT`)**, **Prefill throughput**, **Cache hit rate**, **Last turn output**, and **Session output**, plus a one-click button to open the side panel.
+- **Interactive Context Growth Curve (Tokens vs. Turn)**
+  - Live SVG curve plotting context accumulation over conversation turns (horizontal axis: `turn`, vertical axis: `context`).
+  - Highlights user prompt turns, cache efficiency, and compaction drops.
+  - Interactive crosshair inspection and one-click navigation to jump straight into that turn's detailed breakdown.
 - **Per-Turn Call Inspector (DeepSeek Harness Style)**
   - Click any turn row under **Recent turns** in the side panel to expand its full telemetry breakdown:
     - **Context & Prefill**: Total prompt tokens, cache read vs. fresh input split, context delta (`+tok`), and prefill throughput.

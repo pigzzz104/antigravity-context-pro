@@ -75,6 +75,126 @@
   .mark.sq { border-radius: 2px; }
   .mark.free { background: transparent; border: 1.5px solid var(--empty); }
 
+  /* context growth curve */
+  .curve-card {
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--fg) 2%, transparent);
+    padding: 10px 10px 8px;
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .curve-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--dim);
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .curve-title {
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .curve-badge {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--c-agent) 12%, transparent);
+    color: var(--c-agent);
+    border: 1px solid color-mix(in srgb, var(--c-agent) 30%, transparent);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .curve-info {
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .curve-info strong {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .curve-chart-wrap {
+    position: relative;
+    width: 100%;
+    user-select: none;
+    touch-action: none;
+  }
+  .curve-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .curve-tooltip {
+    min-height: 24px;
+    font-size: 11px;
+    line-height: 1.35;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--fg) 3%, transparent);
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    overflow: hidden;
+  }
+  .curve-tooltip-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .curve-tooltip-preview {
+    color: var(--dim);
+    font-size: 10.5px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .curve-legend {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--dim);
+    padding: 6px 4px 2px;
+    border-top: 1px solid var(--line);
+    margin-top: 2px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .curve-legend-items {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .curve-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--fg);
+    opacity: 0.9;
+    white-space: nowrap;
+  }
+
   /* interactive per-turn inspector (DeepSeek Harness style) */
   .turn-list { display: flex; flex-direction: column; gap: 2px; }
   details.turn-item {
@@ -375,6 +495,331 @@
     return `${(ms / 1000).toFixed(2)}s`;
   }
 
+  function makeSmoothPath(pts) {
+    if (!pts || !pts.length) return '';
+    if (pts.length === 1) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    if (pts.length === 2) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)} L ${pts[1].x.toFixed(1)} ${pts[1].y.toFixed(1)}`;
+    let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i === 0 ? i : i - 1];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+    return d;
+  }
+
+  function calculateYScale(maxVal) {
+    const target = Math.max(100, maxVal * 1.08);
+    const roughStep = target / 3;
+    const pow = Math.pow(10, Math.max(0, Math.floor(Math.log10(roughStep))));
+    const frac = roughStep / pow;
+    let step;
+    if (frac <= 1.5) step = 1 * pow;
+    else if (frac <= 3.5) step = 2 * pow;
+    else if (frac <= 7.5) step = 5 * pow;
+    else step = 10 * pow;
+    const yMax = Math.ceil(target / step) * step;
+    const ticks = [];
+    for (let v = 0; v <= yMax; v += step) {
+      ticks.push(v);
+    }
+    return { yMax, ticks };
+  }
+
+  function growthCurveSection(r) {
+    const t = r.telemetry;
+    if (!t || !Array.isArray(t.turns_curve) || !t.turns_curve.length) return '';
+    const curve = t.turns_curve;
+    const N = curve.length;
+    const pStart = curve[0];
+    const pLatest = curve[N - 1];
+    const growth = (pLatest.prompt_tokens || 0) - (pStart.prompt_tokens || 0);
+
+    const maxTok = Math.max(...curve.map((c) => c.prompt_tokens || 0), 100);
+    const { yMax, ticks } = calculateYScale(maxTok);
+
+    const svgW = 340;
+    const svgH = 150;
+    const padL = 46;
+    const padR = 14;
+    const padT = 18;
+    const padB = 26;
+    const plotW = svgW - padL - padR;
+    const plotH = svgH - padT - padB;
+    const plotBottom = padT + plotH;
+    const plotRight = padL + plotW;
+
+    const pts = curve.map((turn, i) => {
+      const x = N > 1 ? padL + (i / (N - 1)) * plotW : padL + plotW / 2;
+      const y = plotBottom - Math.min(plotH, Math.max(0, ((turn.prompt_tokens || 0) / yMax) * plotH));
+      return { x, y, turn, i };
+    });
+
+    const gridLinesHtml = ticks.map((v) => {
+      const y = plotBottom - (v / yMax) * plotH;
+      return `
+        <line x1="${padL}" y1="${y.toFixed(1)}" x2="${plotRight}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-dasharray="3,3" opacity="0.6"/>
+        <text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" fill="var(--dim)" font-size="9" class="num">${fmtTok(v)}</text>
+      `;
+    }).join('');
+
+    const axisBottomHtml = `<line x1="${padL}" y1="${plotBottom}" x2="${plotRight}" y2="${plotBottom}" stroke="var(--line)"/>`;
+
+    let xTickIndices = [];
+    if (N <= 6) {
+      xTickIndices = curve.map((_, idx) => idx);
+    } else {
+      xTickIndices = [0, Math.floor(N * 0.25), Math.floor(N * 0.5), Math.floor(N * 0.75), N - 1];
+      xTickIndices = [...new Set(xTickIndices)];
+    }
+    const xTicksHtml = xTickIndices.map((idx) => {
+      const pt = pts[idx];
+      return `
+        <line x1="${pt.x.toFixed(1)}" y1="${plotBottom}" x2="${pt.x.toFixed(1)}" y2="${plotBottom + 3}" stroke="var(--line)"/>
+        <text x="${pt.x.toFixed(1)}" y="${plotBottom + 13}" text-anchor="middle" fill="var(--dim)" font-size="9" class="num">#${pt.turn.step}</text>
+      `;
+    }).join('');
+
+    let pathHtml = '';
+    if (N === 1) {
+      pathHtml = `
+        <line x1="${padL}" y1="${pts[0].y.toFixed(1)}" x2="${plotRight}" y2="${pts[0].y.toFixed(1)}" stroke="var(--c-agent)" stroke-width="1.8" stroke-dasharray="4,4"/>
+        <circle cx="${pts[0].x.toFixed(1)}" cy="${pts[0].y.toFixed(1)}" r="4" fill="var(--c-agent)" stroke="var(--surface)" stroke-width="1.5"/>
+      `;
+    } else {
+      const lineD = makeSmoothPath(pts);
+      const areaD = `${lineD} L ${pts[N - 1].x.toFixed(1)} ${plotBottom} L ${pts[0].x.toFixed(1)} ${plotBottom} Z`;
+      pathHtml = `
+        <path d="${areaD}" fill="url(#growth-area-grad)"/>
+        <path d="${lineD}" fill="none" stroke="var(--c-agent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      `;
+    }
+
+    const dotsHtml = pts.map((pt) => {
+      const isUser = Boolean(pt.turn.user_prompt);
+      const isDrop = pt.turn.context_delta < 0;
+      if (N > 32 && !isUser && !isDrop && pt.i !== 0 && pt.i !== N - 1) {
+        return '';
+      }
+      const r = isUser ? 3.5 : (isDrop ? 3.2 : 2.2);
+      const color = isDrop ? '#81c995' : (isUser ? 'var(--c-user)' : 'var(--c-agent)');
+      return `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="${r}" fill="${color}" stroke="var(--surface)" stroke-width="1.2"/>`;
+    }).join('');
+
+    const hasDrops = pts.some((p) => p.turn.context_delta < 0);
+    const budget = Number(r.request_budget_tokens) || 0;
+    let budgetLineHtml = '';
+    let budgetLegendHtml = '';
+    if (budget > 0 && budget <= yMax) {
+      const budgetY = plotBottom - (budget / yMax) * plotH;
+      budgetLineHtml = `
+        <line x1="${padL}" y1="${budgetY.toFixed(1)}" x2="${plotRight}" y2="${budgetY.toFixed(1)}" stroke="#f28b82" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.85"/>
+        <text x="${plotRight}" y="${(budgetY - 3).toFixed(1)}" text-anchor="end" fill="#f28b82" font-size="8.5" font-weight="500">Budget ${fmtTok(budget)}</text>
+      `;
+      budgetLegendHtml = `
+        <span class="curve-legend-item">
+          <svg width="16" height="8" viewBox="0 0 16 8" style="flex:none;">
+            <line x1="0" y1="4" x2="16" y2="4" stroke="#f28b82" stroke-width="1.6" stroke-dasharray="3,2"/>
+          </svg>
+          <span>Budget (${fmtTok(budget)})</span>
+        </span>
+      `;
+    } else if (budget > 0) {
+      budgetLegendHtml = `<span class="dim num">Budget ${fmtTok(budget)}</span>`;
+    }
+
+    return `
+      <section>
+        <h2>
+          <span>Context Growth Curve</span>
+          <span class="hint num">${N} turns</span>
+        </h2>
+        <div class="curve-card">
+          <div class="curve-header">
+            <div class="curve-title">
+              <span class="curve-badge num">#${pStart.step} → #${pLatest.step}</span>
+            </div>
+            <div class="curve-info">
+              Start: <strong>${fmtTok(pStart.prompt_tokens)}</strong> · Latest: <strong>${fmtTok(pLatest.prompt_tokens)}</strong>
+              <span class="dim">(${growth >= 0 ? '+' : ''}${fmtTok(growth)})</span>
+            </div>
+          </div>
+          <div class="curve-chart-wrap" id="curve-wrap">
+            <svg class="curve-svg" viewBox="0 0 ${svgW} ${svgH}" role="img" aria-label="Context growth curve showing tokens per turn">
+              <defs>
+                <linearGradient id="growth-area-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--c-agent)" stop-opacity="0.32"/>
+                  <stop offset="75%" stop-color="var(--c-agent)" stop-opacity="0.06"/>
+                  <stop offset="100%" stop-color="var(--c-agent)" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              ${gridLinesHtml}
+              ${budgetLineHtml}
+              ${axisBottomHtml}
+              ${xTicksHtml}
+              <text x="${padL}" y="11" fill="var(--dim)" font-size="9.5" font-weight="500">context (tokens)</text>
+              <text x="${plotRight}" y="146" text-anchor="end" fill="var(--dim)" font-size="9.5" font-weight="500">turn →</text>
+              ${pathHtml}
+              ${dotsHtml}
+              <line id="curve-crosshair" x1="0" y1="${padT}" x2="0" y2="${plotBottom}" stroke="var(--dim)" stroke-width="1" stroke-dasharray="2,2" opacity="0" pointer-events="none"/>
+              <circle id="curve-hover-dot" cx="0" cy="0" r="4.5" fill="var(--c-agent)" stroke="#ffffff" stroke-width="1.5" opacity="0" pointer-events="none"/>
+              <rect id="curve-hit-area" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent" style="cursor:crosshair;"/>
+            </svg>
+          </div>
+          <div class="curve-tooltip" id="curve-tooltip-bar">
+            <div class="curve-tooltip-main num">
+              <span class="dim">Peak: <strong>${fmtTok(maxTok)}</strong> · Net: <strong>${growth >= 0 ? '+' : ''}${fmtTok(growth)}</strong></span>
+            </div>
+          </div>
+          <div class="curve-legend">
+            <div class="curve-legend-items">
+              <span class="curve-legend-item">
+                <svg width="18" height="10" viewBox="0 0 18 10" style="flex:none;">
+                  <line x1="1" y1="5" x2="17" y2="5" stroke="var(--c-agent)" stroke-width="2.2" stroke-linecap="round"/>
+                  <circle cx="9" cy="5" r="2.8" fill="var(--c-agent)" stroke="var(--surface)" stroke-width="1"/>
+                </svg>
+                <span>Context tokens</span>
+              </span>
+              <span class="curve-legend-item">
+                <svg width="12" height="10" viewBox="0 0 12 10" style="flex:none;">
+                  <circle cx="6" cy="5" r="3.5" fill="var(--c-user)" stroke="var(--surface)" stroke-width="1.2"/>
+                </svg>
+                <span>User prompt</span>
+              </span>
+              ${hasDrops ? `
+              <span class="curve-legend-item">
+                <svg width="12" height="10" viewBox="0 0 12 10" style="flex:none;">
+                  <circle cx="6" cy="5" r="3.5" fill="#81c995" stroke="var(--surface)" stroke-width="1.2"/>
+                </svg>
+                <span>Compaction drop</span>
+              </span>` : ''}
+              ${budget > 0 && budget <= yMax ? budgetLegendHtml : ''}
+            </div>
+            ${budget > 0 && budget > yMax ? budgetLegendHtml : ''}
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function setupGrowthCurve(r) {
+    const t = r.telemetry;
+    if (!t || !Array.isArray(t.turns_curve) || !t.turns_curve.length) return;
+    const curve = t.turns_curve;
+    const N = curve.length;
+    const maxTok = Math.max(...curve.map((c) => c.prompt_tokens || 0), 100);
+    const { yMax } = calculateYScale(maxTok);
+
+    const padL = 46;
+    const padR = 14;
+    const padT = 18;
+    const padB = 26;
+    const plotW = 340 - padL - padR;
+    const plotH = 150 - padT - padB;
+    const plotBottom = padT + plotH;
+
+    const pts = curve.map((turn, i) => {
+      const x = N > 1 ? padL + (i / (N - 1)) * plotW : padL + plotW / 2;
+      const y = plotBottom - Math.min(plotH, Math.max(0, ((turn.prompt_tokens || 0) / yMax) * plotH));
+      return { x, y, turn, i };
+    });
+
+    const hitArea = document.getElementById('curve-hit-area');
+    const crosshair = document.getElementById('curve-crosshair');
+    const hoverDot = document.getElementById('curve-hover-dot');
+    const tooltipBar = document.getElementById('curve-tooltip-bar');
+    if (!hitArea || !crosshair || !hoverDot || !tooltipBar) return;
+
+    function findClosest(e) {
+      const rect = hitArea.getBoundingClientRect();
+      const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const targetSvgX = padL + relX * plotW;
+      let best = pts[0];
+      let bestDist = Math.abs(pts[0].x - targetSvgX);
+      for (let i = 1; i < pts.length; i++) {
+        const dist = Math.abs(pts[i].x - targetSvgX);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = pts[i];
+        }
+      }
+      return best;
+    }
+
+    hitArea.addEventListener('pointermove', (e) => {
+      const pt = findClosest(e);
+      crosshair.setAttribute('x1', pt.x.toFixed(1));
+      crosshair.setAttribute('x2', pt.x.toFixed(1));
+      crosshair.style.opacity = '0.75';
+
+      hoverDot.setAttribute('cx', pt.x.toFixed(1));
+      hoverDot.setAttribute('cy', pt.y.toFixed(1));
+      hoverDot.style.opacity = '1';
+      if (pt.turn.user_prompt) {
+        hoverDot.setAttribute('fill', 'var(--c-user)');
+      } else if (pt.turn.context_delta < 0) {
+        hoverDot.setAttribute('fill', '#81c995');
+      } else {
+        hoverDot.setAttribute('fill', 'var(--c-agent)');
+      }
+
+      const delta = pt.turn.context_delta || 0;
+      const deltaStr = (delta >= 0 ? '+' : '') + fmtTok(delta);
+      const userTag = pt.turn.user_prompt ? '<span class="turn-tag user">user</span>' : '';
+      const toolTag = pt.turn.tool_count > 0 ? `<span class="turn-tag">${pt.turn.tool_count}t</span>` : '';
+      const snippet = pt.turn.user_prompt
+        ? esc(pt.turn.user_prompt)
+        : (pt.turn.tool_summary ? esc(pt.turn.tool_summary) : (pt.turn.timestamp ? esc(pt.turn.timestamp) : ''));
+
+      tooltipBar.innerHTML = `
+        <div class="curve-tooltip-main num">
+          <strong>#${pt.turn.step}</strong>
+          <span>${fmtTok(pt.turn.prompt_tokens)} tok</span>
+          <span class="dim">(${deltaStr})</span>
+          <span class="dim">· cache ${pt.turn.cache_hit_pct}%</span>
+          ${userTag}
+          ${toolTag}
+          ${snippet ? `<span class="curve-tooltip-preview dim">${snippet}</span>` : ''}
+        </div>
+      `;
+    });
+
+    hitArea.addEventListener('pointerleave', () => {
+      crosshair.style.opacity = '0';
+      hoverDot.style.opacity = '0';
+      tooltipBar.innerHTML = `
+        <div class="curve-tooltip-main num">
+          <span class="dim">Peak: <strong>${fmtTok(maxTok)}</strong> · Net: <strong>${growth >= 0 ? '+' : ''}${fmtTok(growth)}</strong></span>
+        </div>
+      `;
+    });
+
+    hitArea.addEventListener('click', (e) => {
+      const pt = findClosest(e);
+      selectedTurnStep = pt.turn.step;
+      const allTurns = (t && Array.isArray(t.recent_turns)) ? t.recent_turns : [];
+      const isBeyondRecent = allTurns.findIndex((tr) => tr.step === pt.turn.step) >= 12;
+      if (isBeyondRecent && !showAllTurns) {
+        showAllTurns = true;
+        render(r);
+      }
+      setTimeout(() => {
+        const det = document.querySelector(`details.turn-item[data-step="${pt.turn.step}"]`);
+        if (det) {
+          det.open = true;
+          det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          det.style.borderColor = 'var(--c-agent)';
+          setTimeout(() => { det.style.borderColor = ''; }, 1200);
+        }
+      }, 50);
+    });
+  }
+
   function telemetrySection(r) {
     const t = r.telemetry;
     if (!t || !t.latest) return '';
@@ -504,7 +949,7 @@
       const toolCount = Array.isArray(tr.tools) ? tr.tools.length : 0;
       return `
         <details class="turn-item" name="turn-inspector" data-step="${tr.step}" ${isOpen ? 'open' : ''}>
-          <summary class="turn-summary" title="Click to inspect Turn #${tr.step}">
+          <summary class="turn-summary" title="Turn #${tr.step}">
             <span class="turn-chev">${SVG_CHEVRON}</span>
             <span class="dim num">#${tr.step}</span>
             <span class="turn-main num">
@@ -523,7 +968,7 @@
     return `
       <section>
         <h2>
-          <span>Recent turns <span class="hint">Click row to inspect</span></span>
+          <span>Recent turns</span>
           ${toggleBtn}
         </h2>
         <div class="turn-list">${turnsHtml}</div>
@@ -537,7 +982,7 @@
     main.innerHTML = `
       <div class="top">
         <div class="model"><span class="live on" title="Live"></span>${esc(r.model)}</div>
-        <button id="copy" title="Copy the report as the CLI prints it">Copy as text</button>
+        <button id="copy" title="Copy report">Copy as text</button>
       </div>
       <div class="usage">
         <span class="big num">${fmtTok(r.used_tokens)}</span>
@@ -546,6 +991,7 @@
       </div>
       ${grid(r)}
       ${categories(r)}
+      ${growthCurveSection(r)}
       ${telemetrySection(r)}
       ${turnsSection(r)}
       ${checkpoints(r)}
@@ -556,6 +1002,7 @@
       <footer><span>Related: /artifact · /skill · /rewind</span><span>Updated ${esc(new Date(r.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span></footer>`;
 
     document.getElementById('copy').addEventListener('click', copy);
+    setupGrowthCurve(r);
 
     const toggleBtn = document.getElementById('toggle-turns-btn');
     if (toggleBtn) {
