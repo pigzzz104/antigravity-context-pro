@@ -212,50 +212,118 @@ const CLIENT_UI_SCRIPT = String.raw`
 
   window.__AGY_GET_CONV_ID__ = getActiveConvId;
 
-  function getReduxStore() {
-    if (window.__AGY_REDUX_STORE__) return window.__AGY_REDUX_STORE__;
+  function getReactInternals() {
+    if (window.__AGY_REDUX_STORE__ && window.__AGY_FEAT_CTX__) {
+      return {
+        store: window.__AGY_REDUX_STORE__,
+        featCtx: window.__AGY_FEAT_CTX__,
+        iframeCtx: window.__AGY_IFRAME_CTX__ || null
+      };
+    }
     try {
       const root = document.getElementById('root') || document.body.firstElementChild;
-      if (!root) return null;
+      if (!root) {
+        return {
+          store: window.__AGY_REDUX_STORE__ || null,
+          featCtx: window.__AGY_FEAT_CTX__ || null,
+          iframeCtx: window.__AGY_IFRAME_CTX__ || null
+        };
+      }
       const fiberKey = Object.keys(root).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactContainer$'));
-      if (!fiberKey) return null;
+      if (!fiberKey) {
+        return {
+          store: window.__AGY_REDUX_STORE__ || null,
+          featCtx: window.__AGY_FEAT_CTX__ || null,
+          iframeCtx: window.__AGY_IFRAME_CTX__ || null
+        };
+      }
       const queue = [root[fiberKey]];
       const visited = new Set();
       while (queue.length) {
         const f = queue.shift();
         if (!f || visited.has(f)) continue;
         visited.add(f);
-        if (f.memoizedProps?.value?.store?.dispatch) {
-          window.__AGY_REDUX_STORE__ = f.memoizedProps.value.store;
-          return window.__AGY_REDUX_STORE__;
+        const val = f.memoizedProps?.value;
+        if (val && typeof val === 'object') {
+          if (val.store?.dispatch && !window.__AGY_REDUX_STORE__) {
+            window.__AGY_REDUX_STORE__ = val.store;
+          }
+          if (
+            typeof val.get === 'function' &&
+            typeof val.getBaseline === 'function' &&
+            Array.isArray(val.featureNames) &&
+            val.featureNames.length > 0 &&
+            !window.__AGY_FEAT_CTX__
+          ) {
+            window.__AGY_FEAT_CTX__ = val;
+          }
+          if (
+            typeof val.setIframeSrc === 'function' &&
+            typeof val.registerPlaceholder === 'function' &&
+            !window.__AGY_IFRAME_CTX__
+          ) {
+            window.__AGY_IFRAME_CTX__ = val;
+          }
+        }
+        if (window.__AGY_REDUX_STORE__ && window.__AGY_FEAT_CTX__ && window.__AGY_IFRAME_CTX__) {
+          break;
         }
         if (f.child) queue.push(f.child);
         if (f.sibling) queue.push(f.sibling);
       }
     } catch (_) {}
-    return null;
+    return {
+      store: window.__AGY_REDUX_STORE__ || null,
+      featCtx: window.__AGY_FEAT_CTX__ || null,
+      iframeCtx: window.__AGY_IFRAME_CTX__ || null
+    };
   }
 
-  function findDesktopContextSidecarUrl(store) {
+  function findDesktopContextSidecarUrl(store, featCtx) {
     const slot = document.querySelector('[data-sidecar-id="desktop-context/context"]');
     if (slot?.getAttribute('data-sidecar-url')) {
-      return slot.getAttribute('data-sidecar-url').split('&conversationId=')[0];
+      return slot.getAttribute('data-sidecar-url').split('&conversationId=')[0].split('?conversationId=')[0];
     }
     const iframe = document.querySelector('iframe[src*="desktop-context"]');
     if (iframe?.src) {
-      return iframe.src.split('&conversationId=')[0];
+      return iframe.src.split('&conversationId=')[0].split('?conversationId=')[0];
     }
+    try {
+      const ext = featCtx?.get?.('extensibility');
+      const sidecars = ext?.provider?.getState?.();
+      if (Array.isArray(sidecars)) {
+        const sc = sidecars.find(
+          (d) => d?.sidecarId === 'desktop-context/context' || (d?.sidecarId || '').endsWith('/context')
+        );
+        if (sc?.baseUrl) {
+          const resolved =
+            typeof ext.resolveSidecarUrl === 'function'
+              ? ext.resolveSidecarUrl(sc.baseUrl, '/')
+              : sc.baseUrl;
+          if (resolved) {
+            return resolved.split('&conversationId=')[0].split('?conversationId=')[0];
+          }
+        }
+      }
+    } catch (_) {}
     try {
       const st = store?.getState?.();
       const panes = [
+        ...Object.values(st?.sidePanelV2?.conversationPanes || {}),
+        ...Object.values(st?.sidePanelV2?.newConversationPanes || {}),
+        ...(st?.sidePanelV2?.homePane ? [st.sidePanelV2.homePane] : []),
+        ...Object.values(st?.sidePanel?.conversationPanes || {}),
+        ...Object.values(st?.sidePanel?.newConversationPanes || {}),
+        ...(st?.sidePanel?.homePane ? [st.sidePanel.homePane] : []),
         ...Object.values(st?.auxPaneV2?.conversationPanes || {}),
         ...Object.values(st?.auxPaneV2?.newConversationPanes || {})
       ];
       for (const p of panes) {
         for (const t of p?.tabs || []) {
-          const url = t?.content?.sidecarView?.url;
-          if (url && url.includes('desktop-context')) {
-            return url.split('&conversationId=')[0];
+          const sv = t?.content?.sidecarView;
+          const url = sv?.url;
+          if (url && (url.includes('desktop-context') || sv?.sidecarId === 'desktop-context/context')) {
+            return url.split('&conversationId=')[0].split('?conversationId=')[0];
           }
         }
       }
@@ -265,44 +333,82 @@ const CLIENT_UI_SCRIPT = String.raw`
 
   function openContextSidecar() {
     try {
-      const store = getReduxStore();
+      const { store, featCtx, iframeCtx } = getReactInternals();
       const convId = getActiveConvId();
       const search = window.__TSR_ROUTER__?.state?.location?.search || {};
+      const projOrSec = search.project || search.section;
       const treeId = convId
         ? { kind: 'cascadeId', cascadeId: convId }
-        : search.section
-          ? { kind: 'newConversation', sectionId: search.section }
+        : projOrSec
+          ? { kind: 'newConversation', projectId: projOrSec, sectionId: projOrSec }
           : { kind: 'home' };
 
-      const sidecarUrl = findDesktopContextSidecarUrl(store);
+      const sidecarUrl = findDesktopContextSidecarUrl(store, featCtx);
       const tabId = 'sidecar__desktop-context/context__/';
 
-      if (store && sidecarUrl) {
-        store.dispatch({
-          type: 'auxPaneV2/setContent',
-          payload: {
-            treeId,
-            content: {
-              type: 'sidecarView',
-              sidecarView: {
-                sidecarId: 'desktop-context/context',
-                path: '/',
-                url: sidecarUrl,
-                title: 'Context Usage',
-                queryParams: {}
-              }
-            },
-            tabId,
-            keepOpen: true
+      if (iframeCtx?.setIframeSrc && sidecarUrl) {
+        try {
+          const fullUrl = convId
+            ? (sidecarUrl.includes('?') ? sidecarUrl + '&conversationId=' + convId : sidecarUrl + '?conversationId=' + convId)
+            : sidecarUrl;
+          iframeCtx.setIframeSrc(fullUrl, fullUrl);
+        } catch (_) {}
+      }
+
+      if (store) {
+        const content = {
+          type: 'sidecarView',
+          sidecarView: {
+            sidecarId: 'desktop-context/context',
+            path: '/',
+            url: sidecarUrl || '',
+            title: 'Context Usage',
+            queryParams: {}
           }
-        });
-        store.dispatch({
-          type: 'auxPane/setAuxPaneOpen',
-          payload: { treeId, isOpen: true }
-        });
+        };
+        const setPayload = {
+          treeId,
+          content,
+          tabId,
+          keepOpen: true
+        };
+
+        // Antigravity 2.0+ (sidePanelV2 & sidePanel)
+        store.dispatch({ type: 'sidePanelV2/setContent', payload: setPayload });
+        store.dispatch({ type: 'sidePanel/setContent', payload: setPayload });
+        store.dispatch({ type: 'sidePanelV2/setActiveTab', payload: { treeId, tabId } });
+        store.dispatch({ type: 'sidePanel/setActiveTab', payload: { treeId, tabId } });
+        store.dispatch({ type: 'sidePanel/setSidePanelOpen', payload: { treeId, isOpen: true } });
+
+        // If inside a subagent conversation, also open the root conversation's side panel
+        if (convId) {
+          try {
+            const summaries = store.getState()?.trajectorySummaries?.summaries;
+            let rootId = convId;
+            const seen = new Set([rootId]);
+            let parentId = summaries?.[rootId]?.trajectoryMetadata?.parentConversationId;
+            while (parentId && !seen.has(parentId)) {
+              seen.add(parentId);
+              rootId = parentId;
+              parentId = summaries?.[rootId]?.trajectoryMetadata?.parentConversationId;
+            }
+            if (rootId && rootId !== convId) {
+              store.dispatch({
+                type: 'sidePanel/setSidePanelOpen',
+                payload: { treeId: { kind: 'cascadeId', cascadeId: rootId }, isOpen: true }
+              });
+            }
+          } catch (_) {}
+        }
+
+        // Legacy Antigravity (auxPaneV2 & auxPane)
+        store.dispatch({ type: 'auxPaneV2/setContent', payload: setPayload });
+        store.dispatch({ type: 'auxPane/setAuxPaneOpen', payload: { treeId, isOpen: true } });
+
         if (window.__TSR_ROUTER__?.navigate) {
           window.__TSR_ROUTER__.navigate({
-            search: (prev) => ({ ...prev, tab: tabId })
+            search: (prev) => ({ ...prev, tab: tabId }),
+            replace: true
           });
         }
         return;
@@ -325,7 +431,7 @@ const CLIENT_UI_SCRIPT = String.raw`
   window.__AGY_OPEN_CONTEXT_SIDECAR__ = openContextSidecar;
 
   function ensureAuxNewTabEntry() {
-    const newTabView = document.querySelector('[data-testid="aux-pane-new-tab-view"]');
+    const newTabView = document.querySelector('[data-testid="side-panel-new-tab-view"], [data-testid="aux-pane-new-tab-view"]');
     if (!newTabView) return;
     let btn = document.getElementById(NEW_TAB_CARD_ID);
     if (btn) {
@@ -350,7 +456,11 @@ const CLIENT_UI_SCRIPT = String.raw`
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openContextSidecar();
+      if (window.__AGY_OPEN_CONTEXT_SIDECAR__) {
+        window.__AGY_OPEN_CONTEXT_SIDECAR__();
+      } else {
+        openContextSidecar();
+      }
     });
     previewCard.parentElement.appendChild(btn);
   }
@@ -374,30 +484,52 @@ const CLIENT_UI_SCRIPT = String.raw`
   function findInputToolbar() {
     // 1. Locate the composer card
     const composer =
+      document.getElementById('antigravity.agentSidePanelInputBox') ||
       document.querySelector('.surface-composer-card, [class*="surface-composer"]') ||
-      document.querySelector('[data-testid="composer"]') ||
+      document.querySelector('[data-testid="agent-input-box"], [data-testid="composer"]') ||
       document.querySelector('form:has(textarea), form:has([contenteditable])');
 
     // 2. Look specifically for the bottom action bar / footer inside composer
     const footer =
-      composer?.querySelector('[class*="input-footer"]') ||
-      document.querySelector('[class*="input-footer"]');
+      composer?.querySelector('.agy-composer-footer, [class*="agy-composer-footer"], [class*="input-footer"]') ||
+      document.querySelector('.agy-composer-footer, [class*="agy-composer-footer"], [class*="input-footer"]');
 
     if (footer) {
-      // Find the primary send or cancel button (always the last button in the action footer group)
-      const sendOrCancelBtn =
-        footer.querySelector('button[aria-label*="Cancel"], button[aria-label*="Send"], button[aria-label*="send"], button[data-testid*="send"]') ||
+      // Locate the right-hand actions group inside the footer (contains permissions selector + mic/voice/send cluster)
+      const rightGroup =
+        footer.querySelector(':scope > div.shrink-0') ||
+        (footer.children.length > 1 ? footer.lastElementChild : null) ||
+        footer;
+
+      // Find the send / cancel / voice / mic action element inside rightGroup
+      const actionEl =
+        rightGroup.querySelector(
+          '[data-testid="voice-live-pill"], [data-testid="voice-pill"], [data-testid="voice-start-button"], [data-testid="voice-end-button"], ' +
+          '[data-testid^="send-button"], .agy-send-button, [data-tooltip-id*="send-button"], ' +
+          'button[aria-label*="Cancel"], button[aria-label*="Send"], button[aria-label*="send"], button[aria-label*="Voice"], button[aria-label*="Live"], button[aria-label*="Record"]'
+        ) ||
         (() => {
-          const btns = Array.from(footer.querySelectorAll('button:not(#agy-ring-btn):not(#agy-open-sidecar-btn)'));
+          const btns = Array.from(rightGroup.querySelectorAll('button:not(#agy-ring-btn):not(#agy-open-sidecar-btn)'));
           return btns.length ? btns[btns.length - 1] : null;
         })();
 
-      if (sendOrCancelBtn && sendOrCancelBtn.parentElement) {
-        return { mode: 'toolbar', container: sendOrCancelBtn.parentElement, anchorBtn: sendOrCancelBtn };
+      if (actionEl) {
+        // Walk up to the direct child of rightGroup so we never inject inside a nested pill (like voice-live-pill)
+        let anchor = actionEl;
+        while (anchor && anchor.parentElement && anchor.parentElement !== rightGroup) {
+          anchor = anchor.parentElement;
+        }
+        if (anchor && anchor.parentElement === rightGroup && anchor.id !== RING_ID) {
+          return { mode: 'toolbar', container: rightGroup, anchorBtn: anchor };
+        }
+      }
+
+      if (rightGroup) {
+        return { mode: 'toolbar', container: rightGroup, anchorBtn: null };
       }
     }
 
-    // 3. Fallback: traverse upwards from textarea, strictly excluding attachment and preview buttons
+    // 3. Fallback: traverse upwards from textarea, strictly excluding attachment, preview, and voice pill wrappers
     const candidates = [
       ...document.querySelectorAll('textarea'),
       ...document.querySelectorAll('[contenteditable="true"]'),
@@ -425,8 +557,16 @@ const CLIENT_UI_SCRIPT = String.raw`
         });
 
       if (validBtns.length > 0) {
-        const lastBtn = validBtns[validBtns.length - 1];
-        return { mode: 'toolbar', container: lastBtn.parentElement, anchorBtn: lastBtn };
+        let anchor = validBtns[validBtns.length - 1];
+        while (
+          anchor.parentElement &&
+          anchor.parentElement !== composerCard &&
+          (anchor.parentElement.matches?.('[data-testid*="voice"], [role="group"], span') ||
+            (anchor.parentElement.className && String(anchor.parentElement.className).includes('rounded-full')))
+        ) {
+          anchor = anchor.parentElement;
+        }
+        return { mode: 'toolbar', container: anchor.parentElement, anchorBtn: anchor };
       }
     }
 
@@ -515,7 +655,7 @@ const CLIENT_UI_SCRIPT = String.raw`
           otherTabs[0].click();
         } else {
           const toggleAuxBtn = document.querySelector('[data-testid="toggle-aux-sidebar"]');
-          const auxSidebar = document.querySelector('[data-testid="aux-sidebar"], [class*="aux-sidebar"]');
+          const auxSidebar = document.querySelector('[data-side-panel-open="true"], [data-aux-pane-open="true"], [data-testid="aux-sidebar"], [class*="aux-sidebar"]');
           if (auxSidebar && toggleAuxBtn && auxSidebar.getBoundingClientRect().width > 20) {
             toggleAuxBtn.click();
           }
@@ -537,14 +677,14 @@ const CLIENT_UI_SCRIPT = String.raw`
     if (!target || !target.container) return;
 
     let wrap = document.getElementById(RING_ID);
-    if (wrap && wrap.dataset.v !== '2') {
+    if (wrap && wrap.dataset.v !== '3') {
       wrap.remove();
       wrap = null;
     }
     if (!wrap) {
       wrap = document.createElement('div');
       wrap.id = RING_ID;
-      wrap.dataset.v = '2';
+      wrap.dataset.v = '3';
       wrap.innerHTML = [
         '<button type="button" id="agy-ring-btn">',
         '  <svg width="13" height="13" viewBox="0 0 36 36" style="transform: rotate(-90deg); flex: none;">',
@@ -570,7 +710,11 @@ const CLIENT_UI_SCRIPT = String.raw`
         if (openBtn) {
           pop.classList.remove('open');
           btn.classList.remove('active');
-          openContextSidecar();
+          if (window.__AGY_OPEN_CONTEXT_SIDECAR__) {
+            window.__AGY_OPEN_CONTEXT_SIDECAR__();
+          } else {
+            openContextSidecar();
+          }
         }
       });
       document.addEventListener('click', () => {
@@ -584,7 +728,7 @@ const CLIENT_UI_SCRIPT = String.raw`
 
     wrap.style.display = 'inline-flex';
 
-    if (!target.container.contains(wrap) || (target.anchorBtn && wrap.nextElementSibling !== target.anchorBtn)) {
+    if (wrap.parentElement !== target.container || (target.anchorBtn && wrap.nextElementSibling !== target.anchorBtn)) {
       if (target.mode === 'toolbar' && target.anchorBtn) {
         target.container.insertBefore(wrap, target.anchorBtn);
       } else {

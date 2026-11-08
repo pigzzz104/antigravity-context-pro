@@ -145,18 +145,8 @@ function fileStamp(path) {
 }
 
 function resolveConversationId(requestedId) {
-  // If an explicit conversationId was passed:
-  if (UUID.test(requestedId || '')) {
-    return requestedId;
-  }
-
-  // If requestedId is explicitly empty string, it means no conversation is open
-  if (requestedId === '') {
-    return '';
-  }
-
-  // Only fallback to latestActiveConvId if requestedId was undefined/null
-  // AND latestActiveConvId is valid, recent (< 60s), and exists on disk
+  // Prefer the live active conversation tracked by inject-ring (so pinned tabs
+  // and plugin:// iframes opened without ?conversationId= always track the active chat)
   if (
     latestActiveConvId &&
     Date.now() - latestActiveConvAt < 60000 &&
@@ -164,6 +154,16 @@ function resolveConversationId(requestedId) {
     existsSync(join(CONVERSATIONS, `${latestActiveConvId}.db`))
   ) {
     return latestActiveConvId;
+  }
+
+  // If an explicit conversationId was passed:
+  if (UUID.test(requestedId || '')) {
+    return requestedId;
+  }
+
+  // If inject-ring recently confirmed no active conversation (e.g. New Conversation screen)
+  if (latestActiveConvAt > 0 && Date.now() - latestActiveConvAt < 60000 && !latestActiveConvId) {
+    return '';
   }
 
   try {
