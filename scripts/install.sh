@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_DIR="$HOME/.gemini/config/plugins/desktop-context"
-CDP_PORT="${AGY_CDP_PORT:-9222}"
+CDP_PORT="${AGY_CDP_PORT:-9333}"
 
 echo "[context-pro] Installing plugin to $PLUGIN_DIR ..."
 

@@ -56,12 +56,12 @@ powershell -ExecutionPolicy Bypass -File "$HOME\.gemini\config\plugins\desktop-c
 ### 2. Enable and launch
 
 1. Quit Antigravity completely (`Cmd + Q` on macOS).
-2. Launch **Antigravity (Context Ring)** created by the installer (located in `~/Applications` on macOS, Desktop / Start Menu on Windows, or your app launcher override on Linux)—this automatically starts Antigravity with `--remote-debugging-port=9222` without modifying the signed app bundle.
+2. Launch **Antigravity (Context Ring)** created by the installer (located in `~/Applications` on macOS, Desktop / Start Menu on Windows, or your app launcher override on Linux)—this automatically starts Antigravity with `--remote-debugging-port=9333` without modifying the signed app bundle.
 3. Open **Customizations → Installed** and enable **Context Usage**. Both the **Input Box Mini-Ring** and the **Context Usage** side panel will now work automatically.
 
 > [!NOTE]
 > **Why does the installer create `Antigravity (Context Ring)`?**
-> Starting in Antigravity v2.33.0, the desktop app disables its startup local debug port (`DevToolsActivePort`) by default, and Antigravity's official Sidecar UI API only exposes the right-hand auxiliary pane (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`). Creating a user-space launcher with `--remote-debugging-port=9222` restores the input-box mini-ring safely without breaking app code signing. To remove the launcher later, run `bash ~/.gemini/config/plugins/desktop-context/scripts/uninstall.sh`.
+> Starting in Antigravity v2.33.0, the desktop app disables its startup local debug port (`DevToolsActivePort`) by default, and Antigravity's official Sidecar UI API only exposes the right-hand auxiliary pane (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`). Creating a user-space launcher with `--remote-debugging-port=9333` restores the input-box mini-ring safely without breaking app code signing. To remove the launcher later, run `bash ~/.gemini/config/plugins/desktop-context/scripts/uninstall.sh`.
 
 ---
 

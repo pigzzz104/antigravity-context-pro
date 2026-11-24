@@ -2,7 +2,7 @@
   "command": "node",
   "args": ["main.mjs"],
   "env": {
-    "AGY_CDP_PORT": "9222"
+    "AGY_CDP_PORT": "9333"
   },
   "restart_policy": "always",
   "display_name": "Context Usage",

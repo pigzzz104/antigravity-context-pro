@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoDir = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 $PluginDir = Join-Path $HOME ".gemini\config\plugins\desktop-context"
-$CdpPort = if ($env:AGY_CDP_PORT) { $env:AGY_CDP_PORT } else { "9222" }
+$CdpPort = if ($env:AGY_CDP_PORT) { $env:AGY_CDP_PORT } else { "9333" }
 
 Write-Host "[context-pro] Installing plugin to $PluginDir ..."
 
